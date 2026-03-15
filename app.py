@@ -87,12 +87,16 @@ def build_system_prompt_admin(profile: AthleteProfile) -> str:
     """Admin version with full workout log access."""
     from data.ingest import recent_summary, weekly_volume, DB_PATH
     template = SYSTEM_PROMPT_FILE.read_text(encoding="utf-8")
-    workouts = recent_summary(DB_PATH, days=21)
-    vol = weekly_volume(DB_PATH, weeks=8)
-    if "Ingen träningsdata" not in vol:
-        workouts += "\n\n" + vol
+    db_path = DB_PATH if DB_PATH.exists() else None
+    if db_path:
+        workouts = recent_summary(db_path, days=21)
+        vol = weekly_volume(db_path, weeks=8)
+        if "Ingen träningsdata" not in vol:
+            workouts += "\n\n" + vol
+    else:
+        workouts = "Ingen träningsdata tillgänglig (databas saknas)."
     weeks = profile.weeks_to_race()
-    fas_ctx = phase_context(weeks, DB_PATH)
+    fas_ctx = phase_context(weeks, db_path)
     return (
         template
         .replace("{ATHLETE_PROFILE}", profile.to_context_string())
@@ -280,13 +284,15 @@ with st.sidebar:
     # Admin-only: training log, strava sync, knowledge base
     if is_admin:
         from data.ingest import recent_summary, weekly_volume, DB_PATH
-        fas, _ = detect_phase(weeks, DB_PATH)
+        db_path = DB_PATH if DB_PATH.exists() else None
+        fas, _ = detect_phase(weeks, db_path)
 
-        with st.expander("Träningslogg (21 dagar)"):
-            st.text(recent_summary(DB_PATH, days=21))
+        if db_path:
+            with st.expander("Träningslogg (21 dagar)"):
+                st.text(recent_summary(db_path, days=21))
 
-        with st.expander("Veckovolym"):
-            st.text(weekly_volume(DB_PATH, weeks=8))
+            with st.expander("Veckovolym"):
+                st.text(weekly_volume(db_path, weeks=8))
 
         articles = list_articles()
         with st.expander(f"Kunskapsbas ({len(articles)} artiklar)"):
