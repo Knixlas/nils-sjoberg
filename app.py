@@ -20,6 +20,14 @@ ROOT = Path(__file__).parent
 load_dotenv(ROOT / ".env", override=True)
 sys.path.insert(0, str(ROOT))
 
+# On Streamlit Cloud, secrets are in st.secrets – sync to os.environ
+try:
+    for key in st.secrets:
+        if isinstance(st.secrets[key], str):
+            os.environ.setdefault(key, st.secrets[key])
+except Exception:
+    pass
+
 from data.athlete_profile import AthleteProfile
 from data.phase_detector import detect_phase, phase_context
 from data.workout_library import library_summary, library_stats
