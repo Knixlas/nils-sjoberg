@@ -5,7 +5,10 @@ Handles profiles and conversation history per user.
 
 import os
 import json
+from datetime import date, datetime, timedelta, timezone
 from supabase import create_client, Client
+
+TRIAL_DAYS = 30
 
 
 def get_client() -> Client:
@@ -116,10 +119,127 @@ def get_subscription(user_id: str, access_token: str) -> dict | None:
     return None
 
 
+def ensure_trial(user_id: str, access_token: str) -> dict:
+    """Create a trial subscription if user has none. Returns subscription."""
+    sub = get_subscription(user_id, access_token)
+    if sub:
+        return sub
+    # Create trial
+    trial_end = (datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS)).isoformat()
+    admin = get_admin_client()
+    result = admin.table("subscriptions").insert({
+        "user_id": user_id,
+        "tier": "premium",
+        "status": "trialing",
+        "trial_ends_at": trial_end,
+    }).execute()
+    return result.data[0] if result.data else {"status": "trialing", "tier": "premium", "trial_ends_at": trial_end}
+
+
 def update_subscription(user_id: str, data: dict):
     """Update subscription (service key, bypasses RLS)."""
     admin = get_admin_client()
-    admin.table("subscriptions").update(data).eq("user_id", user_id).execute()
+    existing = admin.table("subscriptions").select("id").eq("user_id", user_id).execute()
+    if existing.data:
+        admin.table("subscriptions").update(data).eq("user_id", user_id).execute()
+    else:
+        data["user_id"] = user_id
+        admin.table("subscriptions").insert(data).execute()
+
+
+# ── Admin: User Management ────────────────────────────────────────
+
+def list_all_users() -> list:
+    """List all users with profiles and subscriptions (admin only)."""
+    admin = get_admin_client()
+    profiles = admin.table("profiles").select("id, name, email, experience_level, created_at").execute()
+    subs = admin.table("subscriptions").select("user_id, tier, status, trial_ends_at, discount_code").execute()
+    sub_map = {s["user_id"]: s for s in (subs.data or [])}
+
+    users = []
+    for p in (profiles.data or []):
+        sub = sub_map.get(p["id"], {})
+        users.append({
+            "id": p["id"],
+            "name": p.get("name", ""),
+            "email": p.get("email", ""),
+            "experience_level": p.get("experience_level", "unknown"),
+            "created_at": p.get("created_at", ""),
+            "tier": sub.get("tier", "free"),
+            "status": sub.get("status", "none"),
+            "trial_ends_at": sub.get("trial_ends_at"),
+            "discount_code": sub.get("discount_code"),
+        })
+    return users
+
+
+def set_user_tier(user_id: str, tier: str, status: str = "active"):
+    """Set a user's subscription tier (admin action)."""
+    update_subscription(user_id, {"tier": tier, "status": status})
+
+
+# ── Discount Codes ────────────────────────────────────────────────
+
+def get_discount_code(code: str) -> dict | None:
+    """Look up a discount code."""
+    admin = get_admin_client()
+    result = admin.table("discount_codes").select("*").eq("code", code.upper()).execute()
+    if result.data:
+        return result.data[0]
+    return None
+
+
+def create_discount_code(code: str, discount_percent: int, max_uses: int = 1, description: str = "") -> dict:
+    """Create a new discount code (admin action)."""
+    admin = get_admin_client()
+    result = admin.table("discount_codes").insert({
+        "code": code.upper(),
+        "discount_percent": discount_percent,
+        "max_uses": max_uses,
+        "times_used": 0,
+        "description": description,
+        "active": True,
+    }).execute()
+    return result.data[0] if result.data else {}
+
+
+def apply_discount_code(user_id: str, code: str) -> tuple[bool, str]:
+    """Apply a discount code to a user. Returns (success, message)."""
+    dc = get_discount_code(code)
+    if not dc:
+        return False, "Ogiltig rabattkod."
+    if not dc.get("active", False):
+        return False, "Rabattkoden ar inte langre aktiv."
+    if dc["times_used"] >= dc["max_uses"]:
+        return False, "Rabattkoden har redan anvants max antal ganger."
+
+    admin = get_admin_client()
+
+    # Apply: 100% = free premium, otherwise record discount
+    if dc["discount_percent"] >= 100:
+        update_subscription(user_id, {
+            "tier": "premium",
+            "status": "active",
+            "discount_code": code.upper(),
+        })
+    else:
+        update_subscription(user_id, {
+            "discount_code": code.upper(),
+        })
+
+    # Increment usage
+    admin.table("discount_codes").update({
+        "times_used": dc["times_used"] + 1,
+    }).eq("id", dc["id"]).execute()
+
+    return True, f"Rabattkod {code.upper()} tillämpad! ({dc['discount_percent']}% rabatt)"
+
+
+def list_discount_codes() -> list:
+    """List all discount codes (admin only)."""
+    admin = get_admin_client()
+    result = admin.table("discount_codes").select("*").order("created_at", desc=True).execute()
+    return result.data or []
 
 
 # ── Daily Message Counts ───────────────────────────────────────────

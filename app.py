@@ -330,7 +330,7 @@ profile = st.session_state.profile
 # ── Load subscription ────────────────────────────────────────────────
 
 if "subscription" not in st.session_state:
-    st.session_state.subscription = db.get_subscription(user.id, access_token)
+    st.session_state.subscription = db.ensure_trial(user.id, access_token)
 
 subscription = st.session_state.subscription
 tier = get_user_tier(subscription, is_admin)
@@ -379,9 +379,21 @@ with st.sidebar:
     elif not is_admin:
         daily_count = db.get_daily_message_count(user.id, access_token)
         remaining = messages_remaining(tier, daily_count)
-        st.warning(f"Gratis — {remaining} meddelanden kvar idag")
+        st.warning(f"Gratis -- {remaining} meddelanden kvar idag")
         if STRIPE_MONTHLY_LINK:
             st.link_button("Uppgradera till Premium", STRIPE_MONTHLY_LINK, use_container_width=True)
+        with st.expander("Har du en rabattkod?"):
+            with st.form("redeem_code", clear_on_submit=True):
+                code_input = st.text_input("Rabattkod")
+                if st.form_submit_button("Anvand"):
+                    if code_input:
+                        ok, msg = db.apply_discount_code(user.id, code_input)
+                        if ok:
+                            st.success(msg)
+                            del st.session_state["subscription"]
+                            st.rerun()
+                        else:
+                            st.error(msg)
 
     st.divider()
 
@@ -464,6 +476,69 @@ with st.sidebar:
     if tier == "premium" and not is_admin and STRIPE_PORTAL_LINK:
         if st.button("Hantera prenumeration", use_container_width=True):
             st.markdown(f"[Oppna Stripe-portalen]({STRIPE_PORTAL_LINK})")
+
+    # ── Admin Panel ───────────────────────────────────────────────
+    if is_admin:
+        st.divider()
+        st.markdown("### Admin")
+
+        with st.expander("Anvandare"):
+            users = db.list_all_users()
+            for u in users:
+                tier_label = u["tier"]
+                if u["status"] == "trialing":
+                    days_left = ""
+                    if u.get("trial_ends_at"):
+                        try:
+                            from datetime import datetime as dt, timezone as tz
+                            ends = dt.fromisoformat(u["trial_ends_at"].replace("Z", "+00:00"))
+                            days_left = f" ({max(0, (ends - dt.now(tz.utc)).days)}d kvar)"
+                        except Exception:
+                            pass
+                    tier_label = f"trial{days_left}"
+
+                col_name, col_tier, col_action = st.columns([3, 2, 2])
+                with col_name:
+                    st.write(f"**{u['name'] or u['email']}**")
+                    st.caption(u['email'])
+                with col_tier:
+                    st.write(tier_label)
+                with col_action:
+                    new_tier = st.selectbox(
+                        "Tier",
+                        ["free", "premium"],
+                        index=0 if u["tier"] == "free" else 1,
+                        key=f"tier_{u['id']}",
+                        label_visibility="collapsed",
+                    )
+                    if st.button("Spara", key=f"save_{u['id']}"):
+                        db.set_user_tier(u["id"], new_tier)
+                        st.success(f"Uppdaterat {u['name'] or u['email']} -> {new_tier}")
+                        st.rerun()
+                st.markdown("---")
+
+        with st.expander("Rabattkoder"):
+            codes = db.list_discount_codes()
+            if codes:
+                for c in codes:
+                    st.write(f"**{c['code']}** — {c['discount_percent']}% | "
+                             f"Anvant {c['times_used']}/{c['max_uses']} | "
+                             f"{'Aktiv' if c.get('active') else 'Inaktiv'}")
+            else:
+                st.write("Inga rabattkoder.")
+
+            st.markdown("---")
+            st.markdown("**Skapa ny rabattkod**")
+            with st.form("create_discount", clear_on_submit=True):
+                dc_code = st.text_input("Kod (t.ex. VANNER50)")
+                dc_percent = st.number_input("Rabatt %", min_value=1, max_value=100, value=100)
+                dc_max = st.number_input("Max anvandningar", min_value=1, value=1)
+                dc_desc = st.text_input("Beskrivning")
+                if st.form_submit_button("Skapa"):
+                    if dc_code:
+                        db.create_discount_code(dc_code, dc_percent, dc_max, dc_desc)
+                        st.success(f"Skapade rabattkod: {dc_code.upper()}")
+                        st.rerun()
 
     st.divider()
 
