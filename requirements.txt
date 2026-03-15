@@ -1,4 +1,6 @@
 anthropic
+openpyxl
+pandas
 python-dotenv
 requests
 streamlit

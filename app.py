@@ -12,7 +12,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import io
+
 import anthropic
+import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -155,6 +158,32 @@ def get_anthropic_client():
     return anthropic.Anthropic(api_key=api_key)
 
 
+def parse_spreadsheet(file_bytes: bytes, filename: str) -> str:
+    """Parse CSV/XLSX/XLS to a text representation Claude can read."""
+    ext = filename.rsplit(".", 1)[-1].lower()
+    try:
+        if ext == "csv":
+            df = pd.read_csv(io.BytesIO(file_bytes))
+        elif ext in ("xlsx", "xls"):
+            df = pd.read_excel(io.BytesIO(file_bytes))
+        else:
+            return f"[Okant filformat: {ext}]"
+
+        # Limit to first 200 rows to avoid token overflow
+        truncated = ""
+        if len(df) > 200:
+            df = df.head(200)
+            truncated = f"\n(Visar 200 av {len(df)} rader)"
+
+        summary = f"Fil: {filename} ({len(df)} rader, {len(df.columns)} kolumner)\n"
+        summary += f"Kolumner: {', '.join(df.columns.astype(str))}\n\n"
+        summary += df.to_string(index=False, max_rows=200)
+        summary += truncated
+        return summary
+    except Exception as e:
+        return f"[Kunde inte lasa {filename}: {e}]"
+
+
 def build_message_content(text: str, attachment=None):
     """Build Claude API message content with optional file attachment."""
     if not attachment:
@@ -163,20 +192,29 @@ def build_message_content(text: str, attachment=None):
     blocks = []
     file_bytes = attachment["bytes"]
     mime = attachment["type"]
-    b64 = base64.b64encode(file_bytes).decode("utf-8")
+    filename = attachment["name"]
+    ext = filename.rsplit(".", 1)[-1].lower()
 
     if mime.startswith("image/"):
+        b64 = base64.b64encode(file_bytes).decode("utf-8")
         blocks.append({
             "type": "image",
             "source": {"type": "base64", "media_type": mime, "data": b64},
         })
     elif mime == "application/pdf":
+        b64 = base64.b64encode(file_bytes).decode("utf-8")
         blocks.append({
             "type": "document",
             "source": {"type": "base64", "media_type": mime, "data": b64},
         })
+    elif ext in ("csv", "xlsx", "xls"):
+        spreadsheet_text = parse_spreadsheet(file_bytes, filename)
+        blocks.append({
+            "type": "text",
+            "text": f"[Bifogad data]\n{spreadsheet_text}",
+        })
 
-    blocks.append({"type": "text", "text": text or f"[Bifogad fil: {attachment['name']}]"})
+    blocks.append({"type": "text", "text": text or f"[Bifogad fil: {filename}]"})
     return blocks
 
 
@@ -452,8 +490,8 @@ if profile.goal:
 uploaded_file = None
 if can_use_feature(tier, "attachments"):
     uploaded_file = st.file_uploader(
-        "Bifoga fil (bild eller PDF)",
-        type=["png", "jpg", "jpeg", "webp", "gif", "pdf"],
+        "Bifoga fil",
+        type=["png", "jpg", "jpeg", "webp", "gif", "pdf", "csv", "xlsx", "xls"],
         key="file_upload",
         label_visibility="collapsed",
     )
