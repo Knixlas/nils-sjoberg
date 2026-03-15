@@ -5,6 +5,7 @@ Personlig AI-tränare driven av Claude.
 Kör med: streamlit run app.py
 """
 
+import base64
 import json
 import os
 import sys
@@ -35,11 +36,51 @@ from data.knowledge_base import (
     list_articles, add_article, remove_article, knowledge_summary,
 )
 from data import db
+from data.membership import (
+    get_user_tier, can_send_message, can_use_feature,
+    messages_remaining, trial_days_remaining,
+)
 
 SYSTEM_PROMPT_FILE = ROOT / "prompts" / "system_prompt.md"
 MODEL = "claude-sonnet-4-5"
 MAX_HISTORY = 20
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "")
+STRIPE_MONTHLY_LINK = os.environ.get("STRIPE_MONTHLY_LINK", "")
+STRIPE_YEARLY_LINK = os.environ.get("STRIPE_YEARLY_LINK", "")
+STRIPE_PORTAL_LINK = os.environ.get("STRIPE_PORTAL_LINK", "")
+
+# ── TCX Workout Tool Definition ────────────────────────────────────
+
+WORKOUT_TOOL = {
+    "name": "create_workout_file",
+    "description": "Skapa en nedladdningsbar träningspassfil (.tcx) som kan importeras i Garmin Connect eller TrainingPeaks. Använd detta när du föreslår ett strukturerat träningspass.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Passnamn, t.ex. 'Sweet Spot 3x8min'"},
+            "sport": {"type": "string", "enum": ["running", "biking", "swimming"], "description": "Sport"},
+            "steps": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string", "enum": ["warmup", "active", "rest", "cooldown"]},
+                        "duration_seconds": {"type": "integer", "description": "Längd i sekunder"},
+                        "repeats": {"type": "integer", "description": "Antal repetitioner (bara för intervaller)"},
+                        "description": {"type": "string"},
+                        "hr_low": {"type": "integer", "description": "Pulsmål lågt (bpm)"},
+                        "hr_high": {"type": "integer", "description": "Pulsmål högt (bpm)"},
+                        "power_low": {"type": "integer", "description": "Effektmål lågt (watt)"},
+                        "power_high": {"type": "integer", "description": "Effektmål högt (watt)"},
+                    },
+                    "required": ["type", "duration_seconds"],
+                },
+                "description": "Steg i passet",
+            },
+        },
+        "required": ["name", "sport", "steps"],
+    },
+}
 
 # ── Mobile-friendly CSS ─────────────────────────────────────────────
 
@@ -68,7 +109,6 @@ MOBILE_CSS = """
 
 def build_system_prompt(profile: AthleteProfile) -> str:
     template = SYSTEM_PROMPT_FILE.read_text(encoding="utf-8")
-    # For non-admin users, no workout log data
     workouts = "Ingen träningsdata tillgänglig för denna användare ännu."
     vol_text = ""
     weeks = profile.weeks_to_race()
@@ -115,6 +155,31 @@ def get_anthropic_client():
     return anthropic.Anthropic(api_key=api_key)
 
 
+def build_message_content(text: str, attachment=None):
+    """Build Claude API message content with optional file attachment."""
+    if not attachment:
+        return text
+
+    blocks = []
+    file_bytes = attachment["bytes"]
+    mime = attachment["type"]
+    b64 = base64.b64encode(file_bytes).decode("utf-8")
+
+    if mime.startswith("image/"):
+        blocks.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": mime, "data": b64},
+        })
+    elif mime == "application/pdf":
+        blocks.append({
+            "type": "document",
+            "source": {"type": "base64", "media_type": mime, "data": b64},
+        })
+
+    blocks.append({"type": "text", "text": text or f"[Bifogad fil: {attachment['name']}]"})
+    return blocks
+
+
 # ── Page config ──────────────────────────────────────────────────────
 
 st.set_page_config(
@@ -130,8 +195,8 @@ st.markdown(MOBILE_CSS, unsafe_allow_html=True)
 
 def show_auth_page():
     """Login/signup page."""
-    st.markdown("## 🏊‍♂️ Nils Sjöberg")
-    st.caption("Din personliga AI-tränare")
+    st.markdown("## Nils Sjoberg")
+    st.caption("Din personliga AI-tranare")
     st.markdown("---")
 
     tab_login, tab_signup = st.tabs(["Logga in", "Skapa konto"])
@@ -139,7 +204,7 @@ def show_auth_page():
     with tab_login:
         with st.form("login_form"):
             email = st.text_input("E-post")
-            password = st.text_input("Lösenord", type="password")
+            password = st.text_input("Losenord", type="password")
             submitted = st.form_submit_button("Logga in", use_container_width=True)
             if submitted and email and password:
                 try:
@@ -151,7 +216,7 @@ def show_auth_page():
                 except Exception as e:
                     err = str(e)
                     if "Invalid login" in err:
-                        st.error("Fel e-post eller lösenord.")
+                        st.error("Fel e-post eller losenord.")
                     else:
                         st.error(f"Inloggning misslyckades: {err}")
 
@@ -159,11 +224,11 @@ def show_auth_page():
         with st.form("signup_form"):
             name = st.text_input("Ditt namn")
             email_s = st.text_input("E-post", key="signup_email")
-            pw_s = st.text_input("Lösenord (minst 6 tecken)", type="password", key="signup_pw")
+            pw_s = st.text_input("Losenord (minst 6 tecken)", type="password", key="signup_pw")
             submitted_s = st.form_submit_button("Skapa konto", use_container_width=True)
             if submitted_s and email_s and pw_s and name:
                 if len(pw_s) < 6:
-                    st.error("Lösenordet måste vara minst 6 tecken.")
+                    st.error("Losenordet maste vara minst 6 tecken.")
                 else:
                     try:
                         result = db.sign_up(email_s, pw_s, name)
@@ -191,7 +256,6 @@ if "profile" not in st.session_state:
     db_profile = db.get_profile(user.id, access_token)
     if db_profile:
         athlete_dict = db.profile_to_athlete_dict(db_profile)
-        # Write temp file for AthleteProfile to read
         tmp_profile = ROOT / f".profile_{user.id}.json"
         tmp_profile.write_text(json.dumps(athlete_dict, ensure_ascii=False), encoding="utf-8")
         st.session_state.profile = AthleteProfile(profile_file=tmp_profile)
@@ -225,6 +289,14 @@ if "profile" not in st.session_state:
 
 profile = st.session_state.profile
 
+# ── Load subscription ────────────────────────────────────────────────
+
+if "subscription" not in st.session_state:
+    st.session_state.subscription = db.get_subscription(user.id, access_token)
+
+subscription = st.session_state.subscription
+tier = get_user_tier(subscription, is_admin)
+
 # ── Load conversation from Supabase ──────────────────────────────────
 
 if "history" not in st.session_state:
@@ -255,9 +327,23 @@ if "client" not in st.session_state:
 with st.sidebar:
     weeks = profile.weeks_to_race()
 
-    st.markdown("## 🏊‍♂️ Nils Sjöberg")
-    st.caption("Personlig Tränare")
+    st.markdown("## Nils Sjoberg")
+    st.caption("Personlig Tranare")
     st.markdown(f"Inloggad som **{profile.name or user.email}**")
+
+    # Membership status
+    trial_days = trial_days_remaining(subscription)
+    if tier == "premium" and not is_admin:
+        if trial_days is not None and trial_days > 0:
+            st.success(f"Provperiod: {trial_days} dagar kvar")
+        else:
+            st.success("Premium")
+    elif not is_admin:
+        daily_count = db.get_daily_message_count(user.id, access_token)
+        remaining = messages_remaining(tier, daily_count)
+        st.warning(f"Gratis — {remaining} meddelanden kvar idag")
+        if STRIPE_MONTHLY_LINK:
+            st.link_button("Uppgradera till Premium", STRIPE_MONTHLY_LINK, use_container_width=True)
 
     st.divider()
 
@@ -273,7 +359,7 @@ with st.sidebar:
 
     # Training zones (only if they exist)
     if profile.cycle or profile.run or profile.swim:
-        with st.expander("Träningszoner"):
+        with st.expander("Traningszoner"):
             if profile.cycle:
                 st.text(profile.cycle.summary())
             if profile.run:
@@ -288,7 +374,7 @@ with st.sidebar:
         fas, _ = detect_phase(weeks, db_path)
 
         if db_path:
-            with st.expander("Träningslogg (21 dagar)"):
+            with st.expander("Traningslogg (21 dagar)"):
                 st.text(recent_summary(db_path, days=21))
 
             with st.expander("Veckovolym"):
@@ -310,12 +396,12 @@ with st.sidebar:
                 st.write("Inga artiklar.")
 
             st.markdown("---")
-            st.markdown("**Lägg till artikel**")
+            st.markdown("**Lagg till artikel**")
             with st.form("add_article_form", clear_on_submit=True):
                 a_title = st.text_input("Titel")
-                a_source = st.text_input("Källa/URL")
+                a_source = st.text_input("Kalla/URL")
                 a_tags = st.text_input("Tags")
-                a_content = st.text_area("Innehåll", height=150)
+                a_content = st.text_area("Innehall", height=150)
                 if st.form_submit_button("Spara"):
                     if a_title and a_content:
                         add_article(a_title, a_content, source=a_source, tags=a_tags)
@@ -336,6 +422,11 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"Sync misslyckades: {e}")
 
+    # Stripe portal link for premium users
+    if tier == "premium" and not is_admin and STRIPE_PORTAL_LINK:
+        if st.button("Hantera prenumeration", use_container_width=True):
+            st.markdown(f"[Oppna Stripe-portalen]({STRIPE_PORTAL_LINK})")
+
     st.divider()
 
     if st.button("Ny konversation", use_container_width=True):
@@ -353,9 +444,19 @@ with st.sidebar:
 
 # ── Main chat area ───────────────────────────────────────────────────
 
-st.title("Nils Sjöberg")
+st.title("Nils Sjoberg")
 if profile.goal:
     st.caption(profile.goal)
+
+# File uploader (premium feature)
+uploaded_file = None
+if can_use_feature(tier, "attachments"):
+    uploaded_file = st.file_uploader(
+        "Bifoga fil (bild eller PDF)",
+        type=["png", "jpg", "jpeg", "webp", "gif", "pdf"],
+        key="file_upload",
+        label_visibility="collapsed",
+    )
 
 # Display chat history
 for msg in history:
@@ -363,20 +464,40 @@ for msg in history:
     if msg.get("_auto"):
         continue
     with st.chat_message("assistant" if role == "assistant" else "user",
-                         avatar="🏋️" if role == "assistant" else None):
+                         avatar=None):
+        # Show attachments if any
+        if msg.get("attachments"):
+            for att in msg["attachments"]:
+                if att["type"].startswith("image/"):
+                    st.image(att["url"], caption=att["name"], width=300)
+                else:
+                    st.markdown(f"Bifogad: **{att['name']}**")
         st.markdown(msg["content"])
+
+        # Show download button for workout exports
+        if msg.get("workout"):
+            from data.tcx_export import generate_tcx
+            wo = msg["workout"]
+            tcx_data = generate_tcx(wo)
+            st.download_button(
+                label=f"Ladda ner {wo['name']}.tcx",
+                data=tcx_data,
+                file_name=f"{wo['name'].replace(' ', '_')}.tcx",
+                mime="application/vnd.garmin.tcx+xml",
+                key=f"dl_{msg.get('_ts', '')}_{wo['name']}",
+            )
 
 # Auto-intro on first session
 if not history:
-    with st.chat_message("assistant", avatar="🏋️"):
-        with st.spinner("Nils tänker..."):
+    with st.chat_message("assistant", avatar=None):
+        with st.spinner("Nils tanker..."):
             exp = getattr(profile, "experience_level", "unknown")
             if exp in ("beginner", "unknown"):
-                intro_msg = "Hej Nils! Ny session. Presentera dig kort och fråga vad jag vill jobba med idag."
+                intro_msg = "Hej Nils! Ny session. Presentera dig kort och fraga vad jag vill jobba med idag."
             elif exp == "intermediate":
-                intro_msg = "Hej Nils! Ny session. Ge mig en kort statusuppdatering och fråga vad jag vill fokusera på."
+                intro_msg = "Hej Nils! Ny session. Ge mig en kort statusuppdatering och fraga vad jag vill fokusera pa."
             else:
-                intro_msg = "Hej Nils! Ny session. Ge mig en kort statusuppdatering baserat på min träningslogg och hur det ser ut inför nästa tävling."
+                intro_msg = "Hej Nils! Ny session. Ge mig en kort statusuppdatering baserat pa min traningslogg och hur det ser ut infor nasta tavling."
             history.append({"role": "user", "content": intro_msg, "_auto": True})
 
             with st.session_state.client.messages.stream(
@@ -394,22 +515,107 @@ if not history:
 
 # Chat input
 if prompt := st.chat_input("Skriv till Nils..."):
+    # Check message limit for free users
+    daily_count = db.get_daily_message_count(user.id, access_token)
+    if not can_send_message(tier, daily_count):
+        st.error("Du har natt dagens grans (5 meddelanden). Uppgradera till Premium for obegransat!")
+        if STRIPE_MONTHLY_LINK:
+            st.link_button("Uppgradera nu", STRIPE_MONTHLY_LINK)
+        st.stop()
+
+    # Increment message count
+    db.increment_daily_messages(user.id, access_token)
+
+    # Handle file attachment
+    attachment = None
+    attachment_meta = None
+    if uploaded_file is not None:
+        file_bytes = uploaded_file.read()
+        attachment = {
+            "bytes": file_bytes,
+            "type": uploaded_file.type,
+            "name": uploaded_file.name,
+        }
+        # Upload to Supabase Storage (best effort)
+        try:
+            att_url = db.upload_attachment(user.id, access_token, file_bytes, uploaded_file.name)
+            attachment_meta = {"type": uploaded_file.type, "url": att_url, "name": uploaded_file.name}
+        except Exception:
+            attachment_meta = {"type": uploaded_file.type, "url": "", "name": uploaded_file.name}
+
     with st.chat_message("user"):
+        if attachment_meta:
+            if attachment_meta["type"].startswith("image/"):
+                st.image(attachment["bytes"], caption=attachment_meta["name"], width=300)
+            else:
+                st.markdown(f"Bifogad: **{attachment_meta['name']}**")
         st.markdown(prompt)
-    history.append({"role": "user", "content": prompt})
 
-    with st.chat_message("assistant", avatar="🏋️"):
-        clean = [{"role": m["role"], "content": m["content"]}
-                 for m in history[-MAX_HISTORY:] if not m.get("_auto")]
-        with st.session_state.client.messages.stream(
-            model=MODEL,
-            max_tokens=2048,
-            system=st.session_state.system_prompt,
-            messages=clean,
-        ) as stream:
-            response = st.write_stream(stream.text_stream)
+    msg_entry = {"role": "user", "content": prompt}
+    if attachment_meta:
+        msg_entry["attachments"] = [attachment_meta]
+    history.append(msg_entry)
 
-    history.append({"role": "assistant", "content": response})
+    with st.chat_message("assistant", avatar=None):
+        # Build message content (with optional attachment for Claude)
+        content = build_message_content(prompt, attachment)
+        clean = []
+        for m in history[-MAX_HISTORY:]:
+            if m.get("_auto"):
+                continue
+            clean.append({"role": m["role"], "content": m["content"]})
+        # Replace last message content with multimodal content if attachment
+        if attachment and clean:
+            clean[-1]["content"] = content
+
+        # Use tool for workout export if premium
+        tools = [WORKOUT_TOOL] if can_use_feature(tier, "workout_export") else None
+
+        # Non-streaming call when tools are enabled (tool_use not supported with streaming)
+        if tools:
+            response_obj = st.session_state.client.messages.create(
+                model=MODEL,
+                max_tokens=2048,
+                system=st.session_state.system_prompt,
+                messages=clean,
+                tools=tools,
+            )
+            # Process response
+            text_parts = []
+            workout_data = None
+            for block in response_obj.content:
+                if block.type == "text":
+                    text_parts.append(block.text)
+                elif block.type == "tool_use" and block.name == "create_workout_file":
+                    workout_data = block.input
+
+            response = "\n".join(text_parts)
+            st.markdown(response)
+
+            # Show download button if workout was generated
+            if workout_data:
+                from data.tcx_export import generate_tcx
+                tcx_data = generate_tcx(workout_data)
+                st.download_button(
+                    label=f"Ladda ner {workout_data['name']}.tcx",
+                    data=tcx_data,
+                    file_name=f"{workout_data['name'].replace(' ', '_')}.tcx",
+                    mime="application/vnd.garmin.tcx+xml",
+                )
+        else:
+            with st.session_state.client.messages.stream(
+                model=MODEL,
+                max_tokens=2048,
+                system=st.session_state.system_prompt,
+                messages=clean,
+            ) as stream:
+                response = st.write_stream(stream.text_stream)
+            workout_data = None
+
+    msg_out = {"role": "assistant", "content": response, "_ts": datetime.now().isoformat()}
+    if workout_data:
+        msg_out["workout"] = workout_data
+    history.append(msg_out)
     st.session_state.conv_id = db.save_conversation(
         user.id, access_token, history, st.session_state.get("conv_id")
     )

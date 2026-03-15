@@ -105,6 +105,86 @@ def delete_conversation(user_id: str, access_token: str, conv_id: str):
     client.table("conversations").delete().eq("id", conv_id).eq("user_id", user_id).execute()
 
 
+# ── Subscriptions ──────────────────────────────────────────────────
+
+def get_subscription(user_id: str, access_token: str) -> dict | None:
+    client = get_client()
+    client.postgrest.auth(access_token)
+    result = client.table("subscriptions").select("*").eq("user_id", user_id).execute()
+    if result.data:
+        return result.data[0]
+    return None
+
+
+def update_subscription(user_id: str, data: dict):
+    """Update subscription (service key, bypasses RLS)."""
+    admin = get_admin_client()
+    admin.table("subscriptions").update(data).eq("user_id", user_id).execute()
+
+
+# ── Daily Message Counts ───────────────────────────────────────────
+
+def get_daily_message_count(user_id: str, access_token: str) -> int:
+    from datetime import date
+    client = get_client()
+    client.postgrest.auth(access_token)
+    today = date.today().isoformat()
+    result = (
+        client.table("daily_message_counts")
+        .select("count")
+        .eq("user_id", user_id)
+        .eq("message_date", today)
+        .execute()
+    )
+    if result.data:
+        return result.data[0]["count"]
+    return 0
+
+
+def increment_daily_messages(user_id: str, access_token: str) -> int:
+    from datetime import date
+    client = get_client()
+    client.postgrest.auth(access_token)
+    today = date.today().isoformat()
+
+    # Try to update existing row
+    result = (
+        client.table("daily_message_counts")
+        .select("id, count")
+        .eq("user_id", user_id)
+        .eq("message_date", today)
+        .execute()
+    )
+    if result.data:
+        new_count = result.data[0]["count"] + 1
+        client.table("daily_message_counts").update(
+            {"count": new_count}
+        ).eq("id", result.data[0]["id"]).execute()
+        return new_count
+    else:
+        client.table("daily_message_counts").insert({
+            "user_id": user_id,
+            "message_date": today,
+            "count": 1,
+        }).execute()
+        return 1
+
+
+# ── File Attachments (Supabase Storage) ────────────────────────────
+
+def upload_attachment(user_id: str, access_token: str, file_bytes: bytes, filename: str) -> str:
+    """Upload file to Supabase Storage, return public URL."""
+    from datetime import datetime
+    client = get_client()
+    client.postgrest.auth(access_token)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = f"{user_id}/{ts}_{filename}"
+    client.storage.from_("chat-attachments").upload(path, file_bytes)
+    return client.storage.from_("chat-attachments").get_public_url(path)
+
+
+# ── Helpers ────────────────────────────────────────────────────────
+
 def profile_to_athlete_dict(profile: dict) -> dict:
     """Convert Supabase profile row to the format AthleteProfile expects."""
     return {
