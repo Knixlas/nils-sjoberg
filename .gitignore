@@ -1,0 +1,9 @@
+.env
+.strava_tokens.json
+.conversation_history.json
+.profile_*.json
+workouts.db
+athlete_data.json
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
