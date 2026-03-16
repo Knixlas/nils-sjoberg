@@ -77,7 +77,12 @@ STRIPE_PORTAL_LINK = os.environ.get("STRIPE_PORTAL_LINK", "")
 
 WORKOUT_TOOL = {
     "name": "create_workout_file",
-    "description": "Skapa ett strukturerat traningspass som kan pushas till Intervals.icu eller laddas ner som .tcx. Anvand detta nar du foreslar ett strukturerat traningspass.",
+    "description": (
+        "Skapa ett strukturerat traningspass som pushas till Intervals.icu och visas pa klockan. "
+        "VIKTIGT: For lopning, ange ALLTID hr_high (ovre pulsgrans) pa varje active-steg baserat pa atletens zoner. "
+        "For cykling, ange ALLTID power_high (ovre wattgrans). "
+        "Ange description pa varje steg - det visas pa klockan under passet."
+    ),
     "input_schema": {
         "type": "object",
         "properties": {
@@ -89,17 +94,15 @@ WORKOUT_TOOL = {
                     "type": "object",
                     "properties": {
                         "type": {"type": "string", "enum": ["warmup", "active", "rest", "cooldown"]},
-                        "duration_seconds": {"type": "integer", "description": "Längd i sekunder"},
-                        "repeats": {"type": "integer", "description": "Antal repetitioner (bara för intervaller)"},
-                        "description": {"type": "string"},
-                        "hr_low": {"type": "integer", "description": "Pulsmål lågt (bpm)"},
-                        "hr_high": {"type": "integer", "description": "Pulsmål högt (bpm)"},
-                        "power_low": {"type": "integer", "description": "Effektmål lågt (watt)"},
-                        "power_high": {"type": "integer", "description": "Effektmål högt (watt)"},
+                        "duration_seconds": {"type": "integer", "description": "Langd i sekunder"},
+                        "repeats": {"type": "integer", "description": "Antal repetitioner (bara for intervaller)"},
+                        "description": {"type": "string", "description": "Visas pa klockan, t.ex. 'Hog fart Z4' eller 'Latt jogg'"},
+                        "hr_high": {"type": "integer", "description": "Ovre pulsgrans i bpm. OBLIGATORISK for lopning."},
+                        "power_high": {"type": "integer", "description": "Ovre wattgrans. OBLIGATORISK for cykling."},
                     },
-                    "required": ["type", "duration_seconds"],
+                    "required": ["type", "duration_seconds", "description"],
                 },
-                "description": "Steg i passet",
+                "description": "Steg i passet. Varje steg MASTE ha description och hr_high (lopning) eller power_high (cykling).",
             },
         },
         "required": ["name", "sport", "steps"],

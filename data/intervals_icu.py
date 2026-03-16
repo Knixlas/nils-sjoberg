@@ -75,7 +75,7 @@ def workout_to_description(workout: dict) -> str:
     if warmup_steps:
         lines = ["Warmup"]
         for s in warmup_steps:
-            lines.append(f"- {_format_duration(s['duration_seconds'])} {_format_intensity(s)}".strip())
+            lines.append(_format_step(s))
         sections.append("\n".join(lines))
 
     # Build main set section
@@ -83,19 +83,36 @@ def workout_to_description(workout: dict) -> str:
         header = f"Main Set {main_repeats}x" if main_repeats > 1 else "Main Set"
         lines = [header]
         for s in main_steps:
-            dur = _format_duration(s.get("duration_seconds", 0))
-            intensity = _format_intensity(s)
-            lines.append(f"- {dur} {intensity}".strip())
+            lines.append(_format_step(s))
         sections.append("\n".join(lines))
 
     # Build cooldown section
     if cooldown_steps:
         lines = ["Cooldown"]
         for s in cooldown_steps:
-            lines.append(f"- {_format_duration(s['duration_seconds'])} {_format_intensity(s)}".strip())
+            lines.append(_format_step(s))
         sections.append("\n".join(lines))
 
     return "\n\n".join(sections)
+
+
+def _format_step(step: dict) -> str:
+    """Format a single step line with optional text cue and intensity.
+
+    Intervals.icu format: '- TextCue 5m 165bpm HR'
+    The text cue shows on the watch during countdown.
+    """
+    dur = _format_duration(step.get("duration_seconds", 0))
+    intensity = _format_intensity(step)
+    desc = step.get("description", "")
+
+    parts = ["-"]
+    if desc:
+        parts.append(desc)
+    parts.append(dur)
+    if intensity:
+        parts.append(intensity)
+    return " ".join(parts)
 
 
 def _format_duration(seconds: int) -> str:
@@ -114,35 +131,19 @@ def _format_duration(seconds: int) -> str:
 def _format_intensity(step: dict) -> str:
     """Format intensity target for Intervals.icu description.
 
-    Intervals.icu supports:
-    - Power: 75%, 95-105%, 220w, Z3
-    - HR: 70% HR, 75-80% HR, Z2 HR
-    - Pace: 5:00/km Pace, Z2 Pace
+    Uses upper limit only (as requested by user).
+    Intervals.icu supports: 165bpm HR, 280w, Z3, 75%
     """
-    # HR targets
-    hr_low = step.get("hr_low")
+    # HR target (upper limit) — used for running
     hr_high = step.get("hr_high")
-    if hr_low and hr_high:
-        return f"{hr_low}-{hr_high}bpm HR"
-    if hr_low:
-        return f"{hr_low}bpm HR"
+    if hr_high:
+        return f"{hr_high}bpm HR"
 
-    # Power targets (cycling)
-    power_low = step.get("power_low")
+    # Power target (upper limit) — used for cycling
     power_high = step.get("power_high")
-    if power_low and power_high:
-        return f"{power_low}-{power_high}w"
-    if power_low:
-        return f"{power_low}w"
+    if power_high:
+        return f"{power_high}w"
 
-    # Fallback: use zone-like percentages
-    step_type = step.get("type", "active")
-    if step_type == "warmup":
-        return "Z1-Z2"
-    if step_type == "cooldown":
-        return "Z1-Z2"
-    if step_type == "rest":
-        return "Z1"
     return ""
 
 
