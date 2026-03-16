@@ -9,40 +9,48 @@ import base64
 import json
 import os
 import sys
+import traceback
 from datetime import datetime
 from pathlib import Path
 
 import io
 
-import anthropic
-import pandas as pd
 import streamlit as st
-from dotenv import load_dotenv
 
-# Setup paths
-ROOT = Path(__file__).parent
-load_dotenv(ROOT / ".env", override=True)
-sys.path.insert(0, str(ROOT))
-
-# On Streamlit Cloud, secrets are in st.secrets – sync to os.environ
+# ── Debug mode: catch ALL import/startup errors ──────────────────
 try:
-    for key in st.secrets:
-        if isinstance(st.secrets[key], str):
-            os.environ.setdefault(key, st.secrets[key])
-except Exception:
-    pass
+    import anthropic
+    import pandas as pd
+    from dotenv import load_dotenv
 
-from data.athlete_profile import AthleteProfile
-from data.phase_detector import detect_phase, phase_context
-from data.workout_library import library_summary, library_stats
-from data.knowledge_base import (
-    list_articles, add_article, remove_article, knowledge_summary,
-)
-from data import db
-from data.membership import (
-    get_user_tier, can_send_message, can_use_feature,
-    messages_remaining, trial_days_remaining,
-)
+    # Setup paths
+    ROOT = Path(__file__).parent
+    load_dotenv(ROOT / ".env", override=True)
+    sys.path.insert(0, str(ROOT))
+
+    # On Streamlit Cloud, secrets are in st.secrets - sync to os.environ
+    try:
+        for key in st.secrets:
+            if isinstance(st.secrets[key], str):
+                os.environ.setdefault(key, st.secrets[key])
+    except Exception:
+        pass
+
+    from data.athlete_profile import AthleteProfile
+    from data.phase_detector import detect_phase, phase_context
+    from data.workout_library import library_summary, library_stats
+    from data.knowledge_base import (
+        list_articles, add_article, remove_article, knowledge_summary,
+    )
+    from data import db
+    from data.membership import (
+        get_user_tier, can_send_message, can_use_feature,
+        messages_remaining, trial_days_remaining,
+    )
+    _IMPORT_ERROR = None
+except Exception as e:
+    _IMPORT_ERROR = traceback.format_exc()
+    ROOT = Path(__file__).parent
 
 SYSTEM_PROMPT_FILE = ROOT / "prompts" / "system_prompt.md"
 MODEL = "claude-sonnet-4-5"
@@ -226,6 +234,13 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="auto",
 )
+
+# Show import errors if any
+if _IMPORT_ERROR:
+    st.error("App kunde inte starta. Feldetaljer:")
+    st.code(_IMPORT_ERROR)
+    st.stop()
+
 st.markdown(MOBILE_CSS, unsafe_allow_html=True)
 
 
