@@ -7,3 +7,12 @@ athlete_data.json
 __pycache__/
 *.pyc
 .streamlit/secrets.toml
+
+# Training docs (not part of app)
+*.docx
+Input till Nisse/
+README.md
+coach_cli.py
+1.*.md
+2.*.md
+3.*.md
