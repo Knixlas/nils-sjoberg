@@ -2,6 +2,7 @@
 Supabase database operations for multi-user Nils Sjöberg.
 Handles profiles and conversation history per user.
 """
+from __future__ import annotations
 
 import os
 import json

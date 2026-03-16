@@ -2,6 +2,7 @@
 Membership tier logic for Nils Sjöberg.
 Handles tier resolution, feature gating, and message limits.
 """
+from __future__ import annotations
 
 from datetime import datetime, timezone
 
