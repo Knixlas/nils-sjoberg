@@ -3,5 +3,5 @@ openpyxl
 pandas
 python-dotenv
 requests
-streamlit
+streamlit>=1.42.0
 supabase
