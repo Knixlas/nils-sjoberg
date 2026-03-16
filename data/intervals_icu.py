@@ -32,53 +32,70 @@ def _auth_header(api_key: str) -> dict:
 def workout_to_description(workout: dict) -> str:
     """Convert our workout tool output to Intervals.icu text description format.
 
-    The text format is parsed by Intervals.icu into structured workouts:
-    - '- 15m 60% Warmup' for warmup/cooldown steps
-    - '3x' for repeats
-    - '- 5m 100%' for intervals with intensity
-    - HR targets: '- 5m 140-155bpm'
+    Uses section headers (Warmup, Main Set, Cooldown) so Intervals.icu
+    correctly categorizes each step type. Repeat blocks use 'Main Set Nx'.
+
+    Example output:
+        Warmup
+        - 15m 55%
+
+        Main Set 5x
+        - 5m 95-105%
+        - 1m30s 40%
+
+        Cooldown
+        - 10m 50%
     """
-    lines = []
-    i = 0
+    sections = []
     steps = workout.get("steps", [])
 
+    # Group steps into sections: warmup, main (active+rest), cooldown
+    warmup_steps = []
+    main_steps = []
+    cooldown_steps = []
+    main_repeats = 1
+
+    i = 0
     while i < len(steps):
         step = steps[i]
         step_type = step.get("type", "active")
-        duration_s = step.get("duration_seconds", 0)
-        duration_str = _format_duration(duration_s)
-        desc = step.get("description", "")
-        intensity = _format_intensity(step)
-
-        repeats = step.get("repeats", 1)
 
         if step_type == "warmup":
-            label = desc or "Warmup"
-            lines.append(f"- {duration_str} {intensity} {label}".strip())
+            warmup_steps.append(step)
         elif step_type == "cooldown":
-            label = desc or "Cooldown"
-            lines.append(f"- {duration_str} {intensity} {label}".strip())
-        elif step_type == "rest":
-            label = desc or "Rest"
-            lines.append(f"- {duration_str} {intensity} {label}".strip())
-        elif step_type == "active":
-            # Check if this is part of a repeat block
-            if repeats and repeats > 1:
-                lines.append(f"{repeats}x")
-                lines.append(f"- {duration_str} {intensity} {desc}".strip())
-                # Check if next step is rest (interval pair)
-                if i + 1 < len(steps) and steps[i + 1].get("type") == "rest":
-                    rest = steps[i + 1]
-                    rest_dur = _format_duration(rest.get("duration_seconds", 0))
-                    rest_int = _format_intensity(rest)
-                    lines.append(f"- {rest_dur} {rest_int} Rest".strip())
-                    i += 1  # skip rest step
-            else:
-                lines.append(f"- {duration_str} {intensity} {desc}".strip())
-
+            cooldown_steps.append(step)
+        elif step_type in ("active", "rest"):
+            # Active step with repeats: this defines the main set repeat count
+            if step_type == "active" and step.get("repeats", 1) > 1:
+                main_repeats = step["repeats"]
+            main_steps.append(step)
         i += 1
 
-    return "\n".join(lines)
+    # Build warmup section
+    if warmup_steps:
+        lines = ["Warmup"]
+        for s in warmup_steps:
+            lines.append(f"- {_format_duration(s['duration_seconds'])} {_format_intensity(s)}".strip())
+        sections.append("\n".join(lines))
+
+    # Build main set section
+    if main_steps:
+        header = f"Main Set {main_repeats}x" if main_repeats > 1 else "Main Set"
+        lines = [header]
+        for s in main_steps:
+            dur = _format_duration(s.get("duration_seconds", 0))
+            intensity = _format_intensity(s)
+            lines.append(f"- {dur} {intensity}".strip())
+        sections.append("\n".join(lines))
+
+    # Build cooldown section
+    if cooldown_steps:
+        lines = ["Cooldown"]
+        for s in cooldown_steps:
+            lines.append(f"- {_format_duration(s['duration_seconds'])} {_format_intensity(s)}".strip())
+        sections.append("\n".join(lines))
+
+    return "\n\n".join(sections)
 
 
 def _format_duration(seconds: int) -> str:
@@ -95,14 +112,20 @@ def _format_duration(seconds: int) -> str:
 
 
 def _format_intensity(step: dict) -> str:
-    """Format intensity target for Intervals.icu description."""
-    # Prefer HR targets (most universal)
+    """Format intensity target for Intervals.icu description.
+
+    Intervals.icu supports:
+    - Power: 75%, 95-105%, 220w, Z3
+    - HR: 70% HR, 75-80% HR, Z2 HR
+    - Pace: 5:00/km Pace, Z2 Pace
+    """
+    # HR targets
     hr_low = step.get("hr_low")
     hr_high = step.get("hr_high")
     if hr_low and hr_high:
-        return f"{hr_low}-{hr_high}bpm"
+        return f"{hr_low}-{hr_high}bpm HR"
     if hr_low:
-        return f"{hr_low}bpm"
+        return f"{hr_low}bpm HR"
 
     # Power targets (cycling)
     power_low = step.get("power_low")
@@ -112,14 +135,14 @@ def _format_intensity(step: dict) -> str:
     if power_low:
         return f"{power_low}w"
 
-    # Fallback: guess zone from step type
+    # Fallback: use zone-like percentages
     step_type = step.get("type", "active")
     if step_type == "warmup":
-        return "55%"
+        return "Z1-Z2"
     if step_type == "cooldown":
-        return "50%"
+        return "Z1-Z2"
     if step_type == "rest":
-        return "40%"
+        return "Z1"
     return ""
 
 
