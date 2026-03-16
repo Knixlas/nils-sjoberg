@@ -1,9 +1,8 @@
 """
 Nils Sjöberg – Streamlit Web App (Multi-user)
 Personlig AI-tränare driven av Claude.
-
-Kör med: streamlit run app.py
 """
+from __future__ import annotations
 
 import base64
 import json
@@ -17,7 +16,16 @@ import io
 
 import streamlit as st
 
+# ── Page config (MUST be first st call) ────────────────────────────
+st.set_page_config(
+    page_title="Nils Sjöberg",
+    page_icon="🏊",
+    layout="centered",
+    initial_sidebar_state="auto",
+)
+
 # ── Debug mode: catch ALL import/startup errors ──────────────────
+_IMPORT_ERROR = None
 try:
     import anthropic
     import pandas as pd
@@ -47,10 +55,15 @@ try:
         get_user_tier, can_send_message, can_use_feature,
         messages_remaining, trial_days_remaining,
     )
-    _IMPORT_ERROR = None
 except Exception as e:
     _IMPORT_ERROR = traceback.format_exc()
     ROOT = Path(__file__).parent
+
+# Show import errors IMMEDIATELY
+if _IMPORT_ERROR:
+    st.error("App kunde inte starta. Feldetaljer:")
+    st.code(_IMPORT_ERROR)
+    st.stop()
 
 SYSTEM_PROMPT_FILE = ROOT / "prompts" / "system_prompt.md"
 MODEL = "claude-sonnet-4-5"
@@ -225,21 +238,6 @@ def build_message_content(text: str, attachment=None):
     blocks.append({"type": "text", "text": text or f"[Bifogad fil: {filename}]"})
     return blocks
 
-
-# ── Page config ──────────────────────────────────────────────────────
-
-st.set_page_config(
-    page_title="Nils Sjöberg",
-    page_icon="🏊",
-    layout="centered",
-    initial_sidebar_state="auto",
-)
-
-# Show import errors if any
-if _IMPORT_ERROR:
-    st.error("App kunde inte starta. Feldetaljer:")
-    st.code(_IMPORT_ERROR)
-    st.stop()
 
 st.markdown(MOBILE_CSS, unsafe_allow_html=True)
 
@@ -549,7 +547,7 @@ with st.sidebar:
                 codes = []
             if codes:
                 for c in codes:
-                    st.write(f"**{c['code']}** — {c['discount_percent']}% | "
+                    st.write(f"**{c['code']}** -- {c['discount_percent']}% | "
                              f"Anvant {c['times_used']}/{c['max_uses']} | "
                              f"{'Aktiv' if c.get('active') else 'Inaktiv'}")
             else:
