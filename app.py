@@ -77,7 +77,7 @@ STRIPE_PORTAL_LINK = os.environ.get("STRIPE_PORTAL_LINK", "")
 
 WORKOUT_TOOL = {
     "name": "create_workout_file",
-    "description": "Skapa en nedladdningsbar träningspassfil (.tcx) som kan importeras i Garmin Connect eller TrainingPeaks. Använd detta när du föreslår ett strukturerat träningspass.",
+    "description": "Skapa ett strukturerat traningspass som kan pushas till Intervals.icu eller laddas ner som .tcx. Anvand detta nar du foreslar ett strukturerat traningspass.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -566,6 +566,36 @@ with st.sidebar:
                         st.success(f"Skapade rabattkod: {dc_code.upper()}")
                         st.rerun()
 
+    # ── Intervals.icu Settings ─────────────────────────────────────
+    st.divider()
+    with st.expander("Intervals.icu"):
+        icu_settings = None
+        try:
+            icu_settings = db.get_intervals_settings(user.id, access_token)
+        except Exception:
+            pass
+        icu_key = st.text_input(
+            "API-nyckel",
+            value=icu_settings["api_key"] if icu_settings else "",
+            type="password",
+            key="icu_api_key",
+        )
+        icu_athlete = st.text_input(
+            "Athlete ID",
+            value=icu_settings["athlete_id"] if icu_settings else "",
+            key="icu_athlete_id",
+            help="Finns i URL:en pa intervals.icu (t.ex. i12345)",
+        )
+        if st.button("Spara Intervals.icu", use_container_width=True):
+            if icu_key and icu_athlete:
+                try:
+                    db.save_intervals_settings(user.id, access_token, icu_key, icu_athlete)
+                    st.success("Sparat!")
+                except Exception as e:
+                    st.error(f"Kunde inte spara: {e}")
+            else:
+                st.warning("Fyll i bade API-nyckel och Athlete ID.")
+
     st.divider()
 
     if st.button("Ny konversation", use_container_width=True):
@@ -613,18 +643,36 @@ for msg in history:
                     st.markdown(f"Bifogad: **{att['name']}**")
         st.markdown(msg["content"])
 
-        # Show download button for workout exports
+        # Show workout export buttons
         if msg.get("workout"):
-            from data.tcx_export import generate_tcx
             wo = msg["workout"]
-            tcx_data = generate_tcx(wo)
-            st.download_button(
-                label=f"Ladda ner {wo['name']}.tcx",
-                data=tcx_data,
-                file_name=f"{wo['name'].replace(' ', '_')}.tcx",
-                mime="application/vnd.garmin.tcx+xml",
-                key=f"dl_{msg.get('_ts', '')}_{wo['name']}",
-            )
+            col_dl, col_icu = st.columns(2)
+            with col_dl:
+                from data.tcx_export import generate_tcx
+                tcx_data = generate_tcx(wo)
+                st.download_button(
+                    label=f"Ladda ner .tcx",
+                    data=tcx_data,
+                    file_name=f"{wo['name'].replace(' ', '_')}.tcx",
+                    mime="application/vnd.garmin.tcx+xml",
+                    key=f"dl_{msg.get('_ts', '')}_{wo['name']}",
+                )
+            with col_icu:
+                icu_cfg = None
+                try:
+                    icu_cfg = db.get_intervals_settings(user.id, access_token)
+                except Exception:
+                    pass
+                if icu_cfg:
+                    if st.button("Pusha till Intervals.icu", key=f"icu_{msg.get('_ts', '')}_{wo['name']}"):
+                        from data.intervals_icu import push_workout
+                        result = push_workout(icu_cfg["api_key"], icu_cfg["athlete_id"], wo)
+                        if result.get("success"):
+                            st.success("Pushat till Intervals.icu!")
+                        else:
+                            st.error(f"Fel: {result.get('error', 'Okant fel')}")
+                else:
+                    st.caption("Koppla Intervals.icu i sidomenyn")
 
 # Auto-intro on first session
 if not history:
@@ -737,16 +785,34 @@ if prompt := st.chat_input("Skriv till Nils..."):
             response = "\n".join(text_parts)
             st.markdown(response)
 
-            # Show download button if workout was generated
+            # Show workout export buttons
             if workout_data:
-                from data.tcx_export import generate_tcx
-                tcx_data = generate_tcx(workout_data)
-                st.download_button(
-                    label=f"Ladda ner {workout_data['name']}.tcx",
-                    data=tcx_data,
-                    file_name=f"{workout_data['name'].replace(' ', '_')}.tcx",
-                    mime="application/vnd.garmin.tcx+xml",
-                )
+                col_dl2, col_icu2 = st.columns(2)
+                with col_dl2:
+                    from data.tcx_export import generate_tcx
+                    tcx_data = generate_tcx(workout_data)
+                    st.download_button(
+                        label=f"Ladda ner .tcx",
+                        data=tcx_data,
+                        file_name=f"{workout_data['name'].replace(' ', '_')}.tcx",
+                        mime="application/vnd.garmin.tcx+xml",
+                    )
+                with col_icu2:
+                    icu_cfg = None
+                    try:
+                        icu_cfg = db.get_intervals_settings(user.id, access_token)
+                    except Exception:
+                        pass
+                    if icu_cfg:
+                        if st.button("Pusha till Intervals.icu", key="icu_new"):
+                            from data.intervals_icu import push_workout
+                            result = push_workout(icu_cfg["api_key"], icu_cfg["athlete_id"], workout_data)
+                            if result.get("success"):
+                                st.success("Pushat till Intervals.icu!")
+                            else:
+                                st.error(f"Fel: {result.get('error', 'Okant fel')}")
+                    else:
+                        st.caption("Koppla Intervals.icu i sidomenyn")
         else:
             with st.session_state.client.messages.stream(
                 model=MODEL,

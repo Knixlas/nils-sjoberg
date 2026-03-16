@@ -293,6 +293,30 @@ def increment_daily_messages(user_id: str, access_token: str) -> int:
 
 # ── File Attachments (Supabase Storage) ────────────────────────────
 
+# ── Intervals.icu Settings ────────────────────────────────────────
+
+def get_intervals_settings(user_id: str, access_token: str) -> dict | None:
+    """Get user's Intervals.icu API key and athlete ID from profile."""
+    profile = get_profile(user_id, access_token)
+    if not profile:
+        return None
+    api_key = profile.get("intervals_api_key")
+    athlete_id = profile.get("intervals_athlete_id")
+    if api_key and athlete_id:
+        return {"api_key": api_key, "athlete_id": athlete_id}
+    return None
+
+
+def save_intervals_settings(user_id: str, access_token: str, api_key: str, athlete_id: str):
+    """Save Intervals.icu credentials to user profile."""
+    update_profile(user_id, access_token, {
+        "intervals_api_key": api_key,
+        "intervals_athlete_id": athlete_id,
+    })
+
+
+# ── File Attachments (Supabase Storage) ────────────────────────────
+
 def upload_attachment(user_id: str, access_token: str, file_bytes: bytes, filename: str) -> str:
     """Upload file to Supabase Storage, return public URL."""
     from datetime import datetime
