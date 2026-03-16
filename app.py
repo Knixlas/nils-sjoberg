@@ -330,7 +330,10 @@ profile = st.session_state.profile
 # ── Load subscription ────────────────────────────────────────────────
 
 if "subscription" not in st.session_state:
-    st.session_state.subscription = db.ensure_trial(user.id, access_token)
+    try:
+        st.session_state.subscription = db.ensure_trial(user.id, access_token)
+    except Exception:
+        st.session_state.subscription = None
 
 subscription = st.session_state.subscription
 tier = get_user_tier(subscription, is_admin)
@@ -377,7 +380,10 @@ with st.sidebar:
         else:
             st.success("Premium")
     elif not is_admin:
-        daily_count = db.get_daily_message_count(user.id, access_token)
+        try:
+            daily_count = db.get_daily_message_count(user.id, access_token)
+        except Exception:
+            daily_count = 0
         remaining = messages_remaining(tier, daily_count)
         st.warning(f"Gratis -- {remaining} meddelanden kvar idag")
         if STRIPE_MONTHLY_LINK:
@@ -483,7 +489,11 @@ with st.sidebar:
         st.markdown("### Admin")
 
         with st.expander("Anvandare"):
-            users = db.list_all_users()
+            try:
+                users = db.list_all_users()
+            except Exception as e:
+                st.error(f"Kunde inte ladda anvandare: {e}")
+                users = []
             for u in users:
                 tier_label = u["tier"]
                 if u["status"] == "trialing":
@@ -518,7 +528,10 @@ with st.sidebar:
                 st.markdown("---")
 
         with st.expander("Rabattkoder"):
-            codes = db.list_discount_codes()
+            try:
+                codes = db.list_discount_codes()
+            except Exception:
+                codes = []
             if codes:
                 for c in codes:
                     st.write(f"**{c['code']}** — {c['discount_percent']}% | "
@@ -629,7 +642,10 @@ if not history:
 # Chat input
 if prompt := st.chat_input("Skriv till Nils..."):
     # Check message limit for free users
-    daily_count = db.get_daily_message_count(user.id, access_token)
+    try:
+        daily_count = db.get_daily_message_count(user.id, access_token)
+    except Exception:
+        daily_count = 0
     if not can_send_message(tier, daily_count):
         st.error("Du har natt dagens grans (5 meddelanden). Uppgradera till Premium for obegransat!")
         if STRIPE_MONTHLY_LINK:
@@ -637,7 +653,10 @@ if prompt := st.chat_input("Skriv till Nils..."):
         st.stop()
 
     # Increment message count
-    db.increment_daily_messages(user.id, access_token)
+    try:
+        db.increment_daily_messages(user.id, access_token)
+    except Exception:
+        pass
 
     # Handle file attachment
     attachment = None
