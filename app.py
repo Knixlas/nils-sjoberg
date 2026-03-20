@@ -182,13 +182,28 @@ MOBILE_CSS = """
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
+WEEKDAYS_SV = ["mandag", "tisdag", "onsdag", "torsdag", "fredag", "lordag", "sondag"]
+
+
+def _inject_date(text: str) -> str:
+    """Replace date placeholders with actual current date info."""
+    now = datetime.now()
+    return (
+        text
+        .replace("{TODAY_DATE}", now.strftime("%Y-%m-%d"))
+        .replace("{TODAY_WEEKDAY}", WEEKDAYS_SV[now.weekday()])
+        .replace("{CURRENT_YEAR}", str(now.year))
+        .replace("{LAST_YEAR}", str(now.year - 1))
+    )
+
+
 def build_system_prompt(profile: AthleteProfile) -> str:
     template = SYSTEM_PROMPT_FILE.read_text(encoding="utf-8")
     workouts = "Ingen träningsdata tillgänglig för denna användare ännu."
     vol_text = ""
     weeks = profile.weeks_to_race()
     fas_ctx = phase_context(weeks, None)
-    return (
+    return _inject_date(
         template
         .replace("{ATHLETE_PROFILE}", profile.to_context_string())
         .replace("{PHASE_CONTEXT}", fas_ctx)
@@ -212,7 +227,7 @@ def build_system_prompt_admin(profile: AthleteProfile) -> str:
         workouts = "Ingen träningsdata tillgänglig (databas saknas)."
     weeks = profile.weeks_to_race()
     fas_ctx = phase_context(weeks, db_path)
-    return (
+    return _inject_date(
         template
         .replace("{ATHLETE_PROFILE}", profile.to_context_string())
         .replace("{PHASE_CONTEXT}", fas_ctx)
