@@ -122,42 +122,15 @@ MOBILE_CSS = """
     h3 { font-size: 1.1rem !important; margin-top: 0.5rem !important; }
     .stChatMessage { padding: 0.4rem !important; }
 
-    /* Hide sidebar completely — we use bottom nav */
+    /* Hide sidebar completely */
     section[data-testid="stSidebar"] { display: none !important; }
     button[data-testid="stSidebarCollapsedControl"] { display: none !important; }
 
-    /* ── Fixed bottom navigation bar ── */
-    .bottom-nav {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        background: #0e1117;
-        border-top: 1px solid rgba(128,128,128,0.2);
-        display: flex;
-        justify-content: space-around;
-        align-items: center;
-        padding: 0.4rem 0 calc(0.4rem + env(safe-area-inset-bottom, 0px)) 0;
-        z-index: 999999;
+    /* Nav buttons: compact style */
+    [data-testid="stButton"] > button {
+        font-size: 0.85rem !important;
+        padding: 0.3rem 0.5rem !important;
     }
-    .nav-btn {
-        background: none;
-        border: none;
-        color: rgba(255,255,255,0.4);
-        font-size: 0.7rem;
-        text-align: center;
-        cursor: pointer;
-        padding: 0.3rem 1rem;
-        transition: color 0.15s;
-        text-decoration: none;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 2px;
-    }
-    .nav-btn .nav-icon { font-size: 1.3rem; }
-    .nav-btn.active { color: #ff4b4b; }
-    .nav-btn:hover { color: rgba(255,255,255,0.8); }
 
     /* Status cards */
     .status-card {
@@ -496,33 +469,30 @@ def _extract_tip() -> str | None:
 
 # ── Navigation state ──────────────────────────────────────────────────
 
-# Use query params for tab navigation (survives rerun)
-_nav_options = {"hem": 0, "chatt": 1, "profil": 2}
-_qp = st.query_params.get("tab", "hem")
-if _qp not in _nav_options:
-    _qp = "hem"
-active_tab = _qp
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = "hem"
 
-# Render bottom navigation bar (fixed, always visible)
-def _nav_class(tab_name: str) -> str:
-    return "nav-btn active" if active_tab == tab_name else "nav-btn"
+# Bottom nav using real Streamlit buttons (no page reload)
+_nav_container = st.container()
+with _nav_container:
+    nc1, nc2, nc3 = st.columns(3)
+    with nc1:
+        if st.button("Hem", use_container_width=True, key="nav_hem",
+                      type="primary" if st.session_state.active_tab == "hem" else "secondary"):
+            st.session_state.active_tab = "hem"
+            st.rerun()
+    with nc2:
+        if st.button("Chatt", use_container_width=True, key="nav_chatt",
+                      type="primary" if st.session_state.active_tab == "chatt" else "secondary"):
+            st.session_state.active_tab = "chatt"
+            st.rerun()
+    with nc3:
+        if st.button("Profil", use_container_width=True, key="nav_profil",
+                      type="primary" if st.session_state.active_tab == "profil" else "secondary"):
+            st.session_state.active_tab = "profil"
+            st.rerun()
 
-st.markdown(f"""
-<div class="bottom-nav">
-    <a href="?tab=hem" class="{_nav_class('hem')}" target="_self">
-        <span class="nav-icon">&#127968;</span>
-        Hem
-    </a>
-    <a href="?tab=chatt" class="{_nav_class('chatt')}" target="_self">
-        <span class="nav-icon">&#128172;</span>
-        Chatt
-    </a>
-    <a href="?tab=profil" class="{_nav_class('profil')}" target="_self">
-        <span class="nav-icon">&#9881;</span>
-        Profil
-    </a>
-</div>
-""", unsafe_allow_html=True)
+active_tab = st.session_state.active_tab
 
 
 # ── Header (always visible) ───────────────────────────────────────────
