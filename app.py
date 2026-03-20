@@ -113,21 +113,69 @@ WORKOUT_TOOL = {
 
 MOBILE_CSS = """
 <style>
-    /* Compact header on mobile */
-    @media (max-width: 768px) {
-        .block-container { padding: 1rem 0.5rem !important; }
-        h1 { font-size: 1.5rem !important; }
-        .stChatMessage { padding: 0.5rem !important; }
-        section[data-testid="stSidebar"] { width: 280px !important; }
+    /* Mobile-first: tight padding */
+    .block-container { padding: 0.5rem 0.8rem !important; max-width: 100% !important; }
+    h1 { font-size: 1.4rem !important; margin-bottom: 0.2rem !important; }
+    h3 { font-size: 1.1rem !important; margin-top: 0.5rem !important; }
+    .stChatMessage { padding: 0.4rem !important; }
+    section[data-testid="stSidebar"] { width: 280px !important; }
+
+    /* Tabs: compact on mobile */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0px;
+        justify-content: center;
     }
-    /* Clean chat styling */
-    .stChatMessage [data-testid="stMarkdownContainer"] p {
-        line-height: 1.6;
+    .stTabs [data-baseweb="tab"] {
+        padding: 8px 16px;
+        font-size: 0.9rem;
     }
+
+    /* Status cards */
+    .status-card {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        border-radius: 12px;
+        padding: 1rem;
+        margin-bottom: 0.5rem;
+        color: white;
+    }
+    .status-card h4 { margin: 0 0 0.3rem 0; font-size: 0.85rem; opacity: 0.7; }
+    .status-card .big { font-size: 1.8rem; font-weight: 700; margin: 0; }
+    .status-card .sub { font-size: 0.8rem; opacity: 0.6; }
+
+    /* Weekly plan styling */
+    .plan-day {
+        padding: 0.5rem 0;
+        border-bottom: 1px solid rgba(128,128,128,0.15);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .plan-day-name { font-weight: 700; min-width: 2.5rem; font-size: 0.9rem; }
+    .plan-day-rest { opacity: 0.5; font-style: italic; }
+
+    /* Tip box */
+    .tip-box {
+        background: linear-gradient(135deg, #0d7377 0%, #14919b 100%);
+        border-radius: 12px;
+        padding: 1rem;
+        color: white;
+        margin: 0.5rem 0;
+    }
+    .tip-box .tip-label { font-size: 0.75rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px; }
+    .tip-box .tip-text { font-size: 0.95rem; margin-top: 0.3rem; }
+
+    /* Chat styling */
+    .stChatMessage [data-testid="stMarkdownContainer"] p { line-height: 1.6; }
+
     /* Hide Streamlit branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
+
+    /* Desktop: limit width for readability */
+    @media (min-width: 769px) {
+        .block-container { max-width: 700px !important; margin: auto; }
+    }
 </style>
 """
 
@@ -379,32 +427,439 @@ if "client" not in st.session_state:
     st.session_state.client = get_anthropic_client()
 
 
-# ── Sidebar ──────────────────────────────────────────────────────────
+# ── Precompute shared data ────────────────────────────────────────────
 
-with st.sidebar:
-    weeks = profile.weeks_to_race()
+weeks = profile.weeks_to_race()
+trial_days = trial_days_remaining(subscription)
 
-    st.markdown("## Trixa")
-    st.caption("Personlig Tranare")
-    st.markdown(f"Inloggad som **{profile.name or user.email}**")
 
-    # Membership status
-    trial_days = trial_days_remaining(subscription)
-    if tier == "premium" and not is_admin:
-        if trial_days is not None and trial_days > 0:
-            st.success(f"Provperiod: {trial_days} dagar kvar")
-        else:
-            st.success("Premium")
-    elif not is_admin:
+def _extract_latest_plan() -> str | None:
+    """Pull the last weekly plan from chat history (assistant messages)."""
+    for msg in reversed(history):
+        if msg["role"] == "assistant" and msg.get("content"):
+            text = msg["content"]
+            # Look for plan markers
+            for marker in ["VECKOPLAN", "MAN ", "Mandag", "**Man", "**Mån"]:
+                if marker in text:
+                    return text
+    return None
+
+
+def _extract_tip() -> str | None:
+    """Pull a short coaching tip from the latest assistant message."""
+    for msg in reversed(history):
+        if msg["role"] == "assistant" and msg.get("content"):
+            text = msg["content"]
+            # Return last paragraph as tip (usually the personal comment)
+            paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+            if paragraphs:
+                tip = paragraphs[-1]
+                # Cap at ~200 chars for the card
+                if len(tip) > 200:
+                    tip = tip[:197] + "..."
+                return tip
+    return None
+
+
+# ── Header ────────────────────────────────────────────────────────────
+
+col_title, col_user = st.columns([3, 2])
+with col_title:
+    st.markdown("# Trixa")
+with col_user:
+    name_display = profile.name or user.email
+    st.markdown(f"<div style='text-align:right; padding-top:0.7rem; font-size:0.85rem; opacity:0.6'>{name_display}</div>", unsafe_allow_html=True)
+
+
+# ── Main tabs ─────────────────────────────────────────────────────────
+
+tab_home, tab_chat, tab_profile = st.tabs(["Hem", "Chatt", "Profil"])
+
+
+# ══════════════════════════════════════════════════════════════════════
+# TAB: HEM
+# ══════════════════════════════════════════════════════════════════════
+
+with tab_home:
+
+    # --- Status cards row ---
+    if profile.next_race_name and weeks is not None:
+        fas, _ = detect_phase(weeks, None)
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.markdown(f"""<div class="status-card">
+                <h4>Veckor kvar</h4>
+                <p class="big">{weeks}</p>
+                <p class="sub">{profile.next_race_name}</p>
+            </div>""", unsafe_allow_html=True)
+        with c2:
+            st.markdown(f"""<div class="status-card">
+                <h4>Fas</h4>
+                <p class="big">{fas[:10]}</p>
+                <p class="sub">{profile.next_race_date or ''}</p>
+            </div>""", unsafe_allow_html=True)
+        with c3:
+            tier_label = "Premium" if tier == "premium" else "Gratis"
+            if trial_days is not None and trial_days > 0:
+                tier_label = f"Trial ({trial_days}d)"
+            st.markdown(f"""<div class="status-card">
+                <h4>Medlemskap</h4>
+                <p class="big">{tier_label}</p>
+                <p class="sub">{profile.goal[:30] + '...' if profile.goal and len(profile.goal) > 30 else profile.goal or ''}</p>
+            </div>""", unsafe_allow_html=True)
+    else:
+        # No race set — simpler status
+        c1, c2 = st.columns(2)
+        with c1:
+            tier_label = "Premium" if tier == "premium" else "Gratis"
+            if trial_days is not None and trial_days > 0:
+                tier_label = f"Trial ({trial_days}d)"
+            st.markdown(f"""<div class="status-card">
+                <h4>Medlemskap</h4>
+                <p class="big">{tier_label}</p>
+            </div>""", unsafe_allow_html=True)
+        with c2:
+            if profile.goal:
+                st.markdown(f"""<div class="status-card">
+                    <h4>Mal</h4>
+                    <p class="big" style="font-size:1rem">{profile.goal[:50]}</p>
+                </div>""", unsafe_allow_html=True)
+
+    # --- Tip box ---
+    tip = _extract_tip()
+    if tip:
+        st.markdown(f"""<div class="tip-box">
+            <div class="tip-label">Tank pa just nu</div>
+            <div class="tip-text">{tip}</div>
+        </div>""", unsafe_allow_html=True)
+
+    # --- Weekly plan ---
+    st.markdown("### Veckoplan")
+    plan = _extract_latest_plan()
+    if plan:
+        st.markdown(plan)
+    else:
+        st.info("Ingen veckoplan annu. Ga till **Chatt** och be Trixa om en veckoplan!")
+
+    # --- Workout export buttons from latest plan ---
+    latest_workout = None
+    for msg in reversed(history):
+        if msg.get("workout"):
+            latest_workout = msg["workout"]
+            break
+    if latest_workout:
+        st.markdown("---")
+        col_dl, col_icu = st.columns(2)
+        with col_dl:
+            from data.tcx_export import generate_tcx
+            tcx_data = generate_tcx(latest_workout)
+            st.download_button(
+                label="Ladda ner .tcx",
+                data=tcx_data,
+                file_name=f"{latest_workout['name'].replace(' ', '_')}.tcx",
+                mime="application/vnd.garmin.tcx+xml",
+                key="home_dl_tcx",
+            )
+        with col_icu:
+            icu_cfg = None
+            try:
+                icu_cfg = db.get_intervals_settings(user.id, access_token)
+            except Exception:
+                pass
+            if icu_cfg:
+                if st.button("Pusha till Intervals.icu", key="home_icu_push"):
+                    from data.intervals_icu import push_workout
+                    result = push_workout(icu_cfg["api_key"], icu_cfg["athlete_id"], latest_workout)
+                    if result.get("success"):
+                        st.success("Pushat till Intervals.icu!")
+                    else:
+                        st.error(f"Fel: {result.get('error', 'Okant fel')}")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# TAB: CHATT
+# ══════════════════════════════════════════════════════════════════════
+
+with tab_chat:
+
+    # File uploader (premium feature)
+    uploaded_file = None
+    if can_use_feature(tier, "attachments"):
+        uploaded_file = st.file_uploader(
+            "Bifoga fil",
+            type=["png", "jpg", "jpeg", "webp", "gif", "pdf", "csv", "xlsx", "xls"],
+            key="file_upload",
+            label_visibility="collapsed",
+        )
+
+    # Display chat history
+    for msg in history:
+        role = msg["role"]
+        if msg.get("_auto"):
+            continue
+        with st.chat_message("assistant" if role == "assistant" else "user",
+                             avatar=None):
+            if msg.get("attachments"):
+                for att in msg["attachments"]:
+                    if att["type"].startswith("image/"):
+                        st.image(att["url"], caption=att["name"], width=300)
+                    else:
+                        st.markdown(f"Bifogad: **{att['name']}**")
+            st.markdown(msg["content"])
+
+            # Workout export buttons
+            if msg.get("workout"):
+                wo = msg["workout"]
+                col_dl, col_icu = st.columns(2)
+                with col_dl:
+                    from data.tcx_export import generate_tcx
+                    tcx_data = generate_tcx(wo)
+                    st.download_button(
+                        label="Ladda ner .tcx",
+                        data=tcx_data,
+                        file_name=f"{wo['name'].replace(' ', '_')}.tcx",
+                        mime="application/vnd.garmin.tcx+xml",
+                        key=f"dl_{msg.get('_ts', '')}_{wo['name']}",
+                    )
+                with col_icu:
+                    icu_cfg = None
+                    try:
+                        icu_cfg = db.get_intervals_settings(user.id, access_token)
+                    except Exception:
+                        pass
+                    if icu_cfg:
+                        if st.button("Pusha till Intervals.icu", key=f"icu_{msg.get('_ts', '')}_{wo['name']}"):
+                            from data.intervals_icu import push_workout
+                            result = push_workout(icu_cfg["api_key"], icu_cfg["athlete_id"], wo)
+                            if result.get("success"):
+                                st.success("Pushat till Intervals.icu!")
+                            else:
+                                st.error(f"Fel: {result.get('error', 'Okant fel')}")
+                    else:
+                        st.caption("Koppla Intervals.icu under Profil")
+
+    # Auto-intro on first session
+    if not history:
+        with st.chat_message("assistant", avatar=None):
+            with st.spinner("Trixa tanker..."):
+                exp = getattr(profile, "experience_level", "unknown")
+                if exp in ("beginner", "unknown"):
+                    intro_msg = "Hej Trixa! Ny session. Presentera dig kort och fraga vad jag vill jobba med idag."
+                elif exp == "intermediate":
+                    intro_msg = "Hej Trixa! Ny session. Ge mig en kort statusuppdatering och fraga vad jag vill fokusera pa."
+                else:
+                    intro_msg = "Hej Trixa! Ny session. Ge mig en kort statusuppdatering baserat pa min traningslogg och hur det ser ut infor nasta tavling."
+                history.append({"role": "user", "content": intro_msg, "_auto": True})
+
+                with st.session_state.client.messages.stream(
+                    model=MODEL,
+                    max_tokens=2048,
+                    system=st.session_state.system_prompt,
+                    messages=[{"role": m["role"], "content": m["content"]} for m in history[-MAX_HISTORY:]],
+                ) as stream:
+                    response = st.write_stream(stream.text_stream)
+
+                history.append({"role": "assistant", "content": response})
+                st.session_state.conv_id = db.save_conversation(
+                    user.id, access_token, history, st.session_state.get("conv_id")
+                )
+
+    # Free tier message limit warning
+    if tier != "premium" and not is_admin:
         try:
             daily_count = db.get_daily_message_count(user.id, access_token)
         except Exception:
             daily_count = 0
         remaining = messages_remaining(tier, daily_count)
-        st.warning(f"Gratis -- {remaining} meddelanden kvar idag")
+        st.caption(f"{remaining} meddelanden kvar idag")
+
+# Chat input (outside tabs — always visible at bottom)
+if prompt := st.chat_input("Skriv till Trixa..."):
+    # Check message limit for free users
+    try:
+        daily_count = db.get_daily_message_count(user.id, access_token)
+    except Exception:
+        daily_count = 0
+    if not can_send_message(tier, daily_count):
+        st.error("Du har natt dagens grans (5 meddelanden). Uppgradera till Premium for obegransat!")
         if STRIPE_MONTHLY_LINK:
-            st.link_button("Uppgradera till Premium", STRIPE_MONTHLY_LINK, use_container_width=True)
-        with st.expander("Har du en rabattkod?"):
+            st.link_button("Uppgradera nu", STRIPE_MONTHLY_LINK)
+        st.stop()
+
+    # Increment message count
+    try:
+        db.increment_daily_messages(user.id, access_token)
+    except Exception:
+        pass
+
+    # Handle file attachment
+    attachment = None
+    attachment_meta = None
+    if uploaded_file is not None:
+        file_bytes = uploaded_file.read()
+        attachment = {
+            "bytes": file_bytes,
+            "type": uploaded_file.type,
+            "name": uploaded_file.name,
+        }
+        try:
+            att_url = db.upload_attachment(user.id, access_token, file_bytes, uploaded_file.name)
+            attachment_meta = {"type": uploaded_file.type, "url": att_url, "name": uploaded_file.name}
+        except Exception:
+            attachment_meta = {"type": uploaded_file.type, "url": "", "name": uploaded_file.name}
+
+    with st.chat_message("user"):
+        if attachment_meta:
+            if attachment_meta["type"].startswith("image/"):
+                st.image(attachment["bytes"], caption=attachment_meta["name"], width=300)
+            else:
+                st.markdown(f"Bifogad: **{attachment_meta['name']}**")
+        st.markdown(prompt)
+
+    msg_entry = {"role": "user", "content": prompt}
+    if attachment_meta:
+        msg_entry["attachments"] = [attachment_meta]
+    history.append(msg_entry)
+
+    with st.chat_message("assistant", avatar=None):
+        content = build_message_content(prompt, attachment)
+        clean = []
+        for m in history[-MAX_HISTORY:]:
+            if m.get("_auto"):
+                continue
+            clean.append({"role": m["role"], "content": m["content"]})
+        if attachment and clean:
+            clean[-1]["content"] = content
+
+        tools = [WORKOUT_TOOL] if can_use_feature(tier, "workout_export") else None
+
+        if tools:
+            response_obj = st.session_state.client.messages.create(
+                model=MODEL,
+                max_tokens=2048,
+                system=st.session_state.system_prompt,
+                messages=clean,
+                tools=tools,
+            )
+            text_parts = []
+            workout_data = None
+            for block in response_obj.content:
+                if block.type == "text":
+                    text_parts.append(block.text)
+                elif block.type == "tool_use" and block.name == "create_workout_file":
+                    workout_data = block.input
+
+            response = "\n".join(text_parts)
+            st.markdown(response)
+
+            if workout_data:
+                col_dl2, col_icu2 = st.columns(2)
+                with col_dl2:
+                    from data.tcx_export import generate_tcx
+                    tcx_data = generate_tcx(workout_data)
+                    st.download_button(
+                        label="Ladda ner .tcx",
+                        data=tcx_data,
+                        file_name=f"{workout_data['name'].replace(' ', '_')}.tcx",
+                        mime="application/vnd.garmin.tcx+xml",
+                    )
+                with col_icu2:
+                    icu_cfg = None
+                    try:
+                        icu_cfg = db.get_intervals_settings(user.id, access_token)
+                    except Exception:
+                        pass
+                    if icu_cfg:
+                        if st.button("Pusha till Intervals.icu", key="icu_new"):
+                            from data.intervals_icu import push_workout
+                            result = push_workout(icu_cfg["api_key"], icu_cfg["athlete_id"], workout_data)
+                            if result.get("success"):
+                                st.success("Pushat till Intervals.icu!")
+                            else:
+                                st.error(f"Fel: {result.get('error', 'Okant fel')}")
+                    else:
+                        st.caption("Koppla Intervals.icu under Profil")
+        else:
+            with st.session_state.client.messages.stream(
+                model=MODEL,
+                max_tokens=2048,
+                system=st.session_state.system_prompt,
+                messages=clean,
+            ) as stream:
+                response = st.write_stream(stream.text_stream)
+            workout_data = None
+
+    msg_out = {"role": "assistant", "content": response, "_ts": datetime.now().isoformat()}
+    if workout_data:
+        msg_out["workout"] = workout_data
+    history.append(msg_out)
+    st.session_state.conv_id = db.save_conversation(
+        user.id, access_token, history, st.session_state.get("conv_id")
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# TAB: PROFIL
+# ══════════════════════════════════════════════════════════════════════
+
+with tab_profile:
+
+    # --- Race info ---
+    if profile.next_race_name:
+        st.markdown(f"**Nasta tavling:** {profile.next_race_name} ({profile.next_race_date})")
+
+    # --- Training zones ---
+    if profile.cycle or profile.run or profile.swim:
+        with st.expander("Traningszoner", expanded=True):
+            if profile.cycle:
+                st.text(profile.cycle.summary())
+            if profile.run:
+                st.text(profile.run.summary())
+            if profile.swim:
+                st.text(profile.swim.summary())
+
+    # --- Intervals.icu ---
+    with st.expander("Intervals.icu"):
+        icu_settings = None
+        try:
+            icu_settings = db.get_intervals_settings(user.id, access_token)
+        except Exception:
+            pass
+        icu_key = st.text_input(
+            "API-nyckel",
+            value=icu_settings["api_key"] if icu_settings else "",
+            type="password",
+            key="icu_api_key",
+        )
+        icu_athlete = st.text_input(
+            "Athlete ID",
+            value=icu_settings["athlete_id"] if icu_settings else "",
+            key="icu_athlete_id",
+            help="Finns i URL:en pa intervals.icu (t.ex. i12345)",
+        )
+        if st.button("Spara Intervals.icu", use_container_width=True):
+            if icu_key and icu_athlete:
+                try:
+                    db.save_intervals_settings(user.id, access_token, icu_key, icu_athlete)
+                    st.success("Sparat!")
+                except Exception as e:
+                    st.error(f"Kunde inte spara: {e}")
+            else:
+                st.warning("Fyll i bade API-nyckel och Athlete ID.")
+
+    # --- Membership ---
+    with st.expander("Medlemskap"):
+        if tier == "premium":
+            if trial_days is not None and trial_days > 0:
+                st.success(f"Provperiod: {trial_days} dagar kvar")
+            else:
+                st.success("Premium")
+            if STRIPE_PORTAL_LINK:
+                st.link_button("Hantera prenumeration", STRIPE_PORTAL_LINK, use_container_width=True)
+        else:
+            st.warning("Gratisplan (5 meddelanden/dag)")
+            if STRIPE_MONTHLY_LINK:
+                st.link_button("Uppgradera till Premium", STRIPE_MONTHLY_LINK, use_container_width=True)
             with st.form("redeem_code", clear_on_submit=True):
                 code_input = st.text_input("Rabattkod")
                 if st.form_submit_button("Anvand"):
@@ -417,40 +872,23 @@ with st.sidebar:
                         else:
                             st.error(msg)
 
-    st.divider()
-
-    if profile.next_race_name and weeks is not None:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Veckor kvar", f"{weeks}v")
-        with col2:
-            fas, _ = detect_phase(weeks, None)
-            st.metric("Fas", fas[:12])
-        st.info(f"**{profile.next_race_name}**\n\n{profile.next_race_date}")
-        st.divider()
-
-    # Training zones (only if they exist)
-    if profile.cycle or profile.run or profile.swim:
-        with st.expander("Traningszoner"):
-            if profile.cycle:
-                st.text(profile.cycle.summary())
-            if profile.run:
-                st.text(profile.run.summary())
-            if profile.swim:
-                st.text(profile.swim.summary())
-
-    # Admin-only: training log, strava sync, knowledge base
+    # --- Admin panel ---
     if is_admin:
-        from data.ingest import recent_summary, weekly_volume, DB_PATH
-        db_path = DB_PATH if DB_PATH.exists() else None
-        fas, _ = detect_phase(weeks, db_path)
+        st.markdown("---")
+        st.markdown("### Admin")
 
-        if db_path:
-            with st.expander("Traningslogg (21 dagar)"):
-                st.text(recent_summary(db_path, days=21))
+        if is_admin:
+            try:
+                from data.ingest import recent_summary, weekly_volume, DB_PATH
+                db_path = DB_PATH if DB_PATH.exists() else None
+            except Exception:
+                db_path = None
 
-            with st.expander("Veckovolym"):
-                st.text(weekly_volume(db_path, weeks=8))
+            if db_path:
+                with st.expander("Traningslogg (21 dagar)"):
+                    st.text(recent_summary(db_path, days=21))
+                with st.expander("Veckovolym"):
+                    st.text(weekly_volume(db_path, weeks=8))
 
         articles = list_articles()
         with st.expander(f"Kunskapsbas ({len(articles)} artiklar)"):
@@ -466,7 +904,6 @@ with st.sidebar:
                             st.rerun()
             else:
                 st.write("Inga artiklar.")
-
             st.markdown("---")
             st.markdown("**Lagg till artikel**")
             with st.form("add_article_form", clear_on_submit=True):
@@ -481,8 +918,6 @@ with st.sidebar:
                         st.success(f"Lade till: {a_title}")
                         st.rerun()
 
-        st.divider()
-
         if st.button("Synka Strava", use_container_width=True):
             with st.spinner("Synkar..."):
                 try:
@@ -493,16 +928,6 @@ with st.sidebar:
                     st.rerun()
                 except Exception as e:
                     st.error(f"Sync misslyckades: {e}")
-
-    # Stripe portal link for premium users
-    if tier == "premium" and not is_admin and STRIPE_PORTAL_LINK:
-        if st.button("Hantera prenumeration", use_container_width=True):
-            st.markdown(f"[Oppna Stripe-portalen]({STRIPE_PORTAL_LINK})")
-
-    # ── Admin Panel ───────────────────────────────────────────────
-    if is_admin:
-        st.divider()
-        st.markdown("### Admin")
 
         with st.expander("Anvandare"):
             try:
@@ -522,7 +947,6 @@ with st.sidebar:
                         except Exception:
                             pass
                     tier_label = f"trial{days_left}"
-
                 col_name, col_tier, col_action = st.columns([3, 2, 2])
                 with col_name:
                     st.write(f"**{u['name'] or u['email']}**")
@@ -555,7 +979,6 @@ with st.sidebar:
                              f"{'Aktiv' if c.get('active') else 'Inaktiv'}")
             else:
                 st.write("Inga rabattkoder.")
-
             st.markdown("---")
             st.markdown("**Skapa ny rabattkod**")
             with st.form("create_discount", clear_on_submit=True):
@@ -569,37 +992,8 @@ with st.sidebar:
                         st.success(f"Skapade rabattkod: {dc_code.upper()}")
                         st.rerun()
 
-    # ── Intervals.icu Settings ─────────────────────────────────────
-    st.divider()
-    with st.expander("Intervals.icu"):
-        icu_settings = None
-        try:
-            icu_settings = db.get_intervals_settings(user.id, access_token)
-        except Exception:
-            pass
-        icu_key = st.text_input(
-            "API-nyckel",
-            value=icu_settings["api_key"] if icu_settings else "",
-            type="password",
-            key="icu_api_key",
-        )
-        icu_athlete = st.text_input(
-            "Athlete ID",
-            value=icu_settings["athlete_id"] if icu_settings else "",
-            key="icu_athlete_id",
-            help="Finns i URL:en pa intervals.icu (t.ex. i12345)",
-        )
-        if st.button("Spara Intervals.icu", use_container_width=True):
-            if icu_key and icu_athlete:
-                try:
-                    db.save_intervals_settings(user.id, access_token, icu_key, icu_athlete)
-                    st.success("Sparat!")
-                except Exception as e:
-                    st.error(f"Kunde inte spara: {e}")
-            else:
-                st.warning("Fyll i bade API-nyckel och Athlete ID.")
-
-    st.divider()
+    # --- Actions ---
+    st.markdown("---")
 
     if st.button("Ny konversation", use_container_width=True):
         st.session_state.history = []
@@ -612,224 +1006,3 @@ with st.sidebar:
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()
-
-
-# ── Main chat area ───────────────────────────────────────────────────
-
-st.title("Trixa")
-if profile.goal:
-    st.caption(profile.goal)
-
-# File uploader (premium feature)
-uploaded_file = None
-if can_use_feature(tier, "attachments"):
-    uploaded_file = st.file_uploader(
-        "Bifoga fil",
-        type=["png", "jpg", "jpeg", "webp", "gif", "pdf", "csv", "xlsx", "xls"],
-        key="file_upload",
-        label_visibility="collapsed",
-    )
-
-# Display chat history
-for msg in history:
-    role = msg["role"]
-    if msg.get("_auto"):
-        continue
-    with st.chat_message("assistant" if role == "assistant" else "user",
-                         avatar=None):
-        # Show attachments if any
-        if msg.get("attachments"):
-            for att in msg["attachments"]:
-                if att["type"].startswith("image/"):
-                    st.image(att["url"], caption=att["name"], width=300)
-                else:
-                    st.markdown(f"Bifogad: **{att['name']}**")
-        st.markdown(msg["content"])
-
-        # Show workout export buttons
-        if msg.get("workout"):
-            wo = msg["workout"]
-            col_dl, col_icu = st.columns(2)
-            with col_dl:
-                from data.tcx_export import generate_tcx
-                tcx_data = generate_tcx(wo)
-                st.download_button(
-                    label=f"Ladda ner .tcx",
-                    data=tcx_data,
-                    file_name=f"{wo['name'].replace(' ', '_')}.tcx",
-                    mime="application/vnd.garmin.tcx+xml",
-                    key=f"dl_{msg.get('_ts', '')}_{wo['name']}",
-                )
-            with col_icu:
-                icu_cfg = None
-                try:
-                    icu_cfg = db.get_intervals_settings(user.id, access_token)
-                except Exception:
-                    pass
-                if icu_cfg:
-                    if st.button("Pusha till Intervals.icu", key=f"icu_{msg.get('_ts', '')}_{wo['name']}"):
-                        from data.intervals_icu import push_workout
-                        result = push_workout(icu_cfg["api_key"], icu_cfg["athlete_id"], wo)
-                        if result.get("success"):
-                            st.success("Pushat till Intervals.icu!")
-                        else:
-                            st.error(f"Fel: {result.get('error', 'Okant fel')}")
-                else:
-                    st.caption("Koppla Intervals.icu i sidomenyn")
-
-# Auto-intro on first session
-if not history:
-    with st.chat_message("assistant", avatar=None):
-        with st.spinner("Trixa tanker..."):
-            exp = getattr(profile, "experience_level", "unknown")
-            if exp in ("beginner", "unknown"):
-                intro_msg = "Hej Trixa! Ny session. Presentera dig kort och fraga vad jag vill jobba med idag."
-            elif exp == "intermediate":
-                intro_msg = "Hej Trixa! Ny session. Ge mig en kort statusuppdatering och fraga vad jag vill fokusera pa."
-            else:
-                intro_msg = "Hej Trixa! Ny session. Ge mig en kort statusuppdatering baserat pa min traningslogg och hur det ser ut infor nasta tavling."
-            history.append({"role": "user", "content": intro_msg, "_auto": True})
-
-            with st.session_state.client.messages.stream(
-                model=MODEL,
-                max_tokens=2048,
-                system=st.session_state.system_prompt,
-                messages=[{"role": m["role"], "content": m["content"]} for m in history[-MAX_HISTORY:]],
-            ) as stream:
-                response = st.write_stream(stream.text_stream)
-
-            history.append({"role": "assistant", "content": response})
-            st.session_state.conv_id = db.save_conversation(
-                user.id, access_token, history, st.session_state.get("conv_id")
-            )
-
-# Chat input
-if prompt := st.chat_input("Skriv till Trixa..."):
-    # Check message limit for free users
-    try:
-        daily_count = db.get_daily_message_count(user.id, access_token)
-    except Exception:
-        daily_count = 0
-    if not can_send_message(tier, daily_count):
-        st.error("Du har natt dagens grans (5 meddelanden). Uppgradera till Premium for obegransat!")
-        if STRIPE_MONTHLY_LINK:
-            st.link_button("Uppgradera nu", STRIPE_MONTHLY_LINK)
-        st.stop()
-
-    # Increment message count
-    try:
-        db.increment_daily_messages(user.id, access_token)
-    except Exception:
-        pass
-
-    # Handle file attachment
-    attachment = None
-    attachment_meta = None
-    if uploaded_file is not None:
-        file_bytes = uploaded_file.read()
-        attachment = {
-            "bytes": file_bytes,
-            "type": uploaded_file.type,
-            "name": uploaded_file.name,
-        }
-        # Upload to Supabase Storage (best effort)
-        try:
-            att_url = db.upload_attachment(user.id, access_token, file_bytes, uploaded_file.name)
-            attachment_meta = {"type": uploaded_file.type, "url": att_url, "name": uploaded_file.name}
-        except Exception:
-            attachment_meta = {"type": uploaded_file.type, "url": "", "name": uploaded_file.name}
-
-    with st.chat_message("user"):
-        if attachment_meta:
-            if attachment_meta["type"].startswith("image/"):
-                st.image(attachment["bytes"], caption=attachment_meta["name"], width=300)
-            else:
-                st.markdown(f"Bifogad: **{attachment_meta['name']}**")
-        st.markdown(prompt)
-
-    msg_entry = {"role": "user", "content": prompt}
-    if attachment_meta:
-        msg_entry["attachments"] = [attachment_meta]
-    history.append(msg_entry)
-
-    with st.chat_message("assistant", avatar=None):
-        # Build message content (with optional attachment for Claude)
-        content = build_message_content(prompt, attachment)
-        clean = []
-        for m in history[-MAX_HISTORY:]:
-            if m.get("_auto"):
-                continue
-            clean.append({"role": m["role"], "content": m["content"]})
-        # Replace last message content with multimodal content if attachment
-        if attachment and clean:
-            clean[-1]["content"] = content
-
-        # Use tool for workout export if premium
-        tools = [WORKOUT_TOOL] if can_use_feature(tier, "workout_export") else None
-
-        # Non-streaming call when tools are enabled (tool_use not supported with streaming)
-        if tools:
-            response_obj = st.session_state.client.messages.create(
-                model=MODEL,
-                max_tokens=2048,
-                system=st.session_state.system_prompt,
-                messages=clean,
-                tools=tools,
-            )
-            # Process response
-            text_parts = []
-            workout_data = None
-            for block in response_obj.content:
-                if block.type == "text":
-                    text_parts.append(block.text)
-                elif block.type == "tool_use" and block.name == "create_workout_file":
-                    workout_data = block.input
-
-            response = "\n".join(text_parts)
-            st.markdown(response)
-
-            # Show workout export buttons
-            if workout_data:
-                col_dl2, col_icu2 = st.columns(2)
-                with col_dl2:
-                    from data.tcx_export import generate_tcx
-                    tcx_data = generate_tcx(workout_data)
-                    st.download_button(
-                        label=f"Ladda ner .tcx",
-                        data=tcx_data,
-                        file_name=f"{workout_data['name'].replace(' ', '_')}.tcx",
-                        mime="application/vnd.garmin.tcx+xml",
-                    )
-                with col_icu2:
-                    icu_cfg = None
-                    try:
-                        icu_cfg = db.get_intervals_settings(user.id, access_token)
-                    except Exception:
-                        pass
-                    if icu_cfg:
-                        if st.button("Pusha till Intervals.icu", key="icu_new"):
-                            from data.intervals_icu import push_workout
-                            result = push_workout(icu_cfg["api_key"], icu_cfg["athlete_id"], workout_data)
-                            if result.get("success"):
-                                st.success("Pushat till Intervals.icu!")
-                            else:
-                                st.error(f"Fel: {result.get('error', 'Okant fel')}")
-                    else:
-                        st.caption("Koppla Intervals.icu i sidomenyn")
-        else:
-            with st.session_state.client.messages.stream(
-                model=MODEL,
-                max_tokens=2048,
-                system=st.session_state.system_prompt,
-                messages=clean,
-            ) as stream:
-                response = st.write_stream(stream.text_stream)
-            workout_data = None
-
-    msg_out = {"role": "assistant", "content": response, "_ts": datetime.now().isoformat()}
-    if workout_data:
-        msg_out["workout"] = workout_data
-    history.append(msg_out)
-    st.session_state.conv_id = db.save_conversation(
-        user.id, access_token, history, st.session_state.get("conv_id")
-    )
