@@ -113,22 +113,51 @@ WORKOUT_TOOL = {
 
 MOBILE_CSS = """
 <style>
-    /* Mobile-first: tight padding */
-    .block-container { padding: 0.5rem 0.8rem !important; max-width: 100% !important; }
+    /* Mobile-first: tight padding, room for bottom nav */
+    .block-container {
+        padding: 0.5rem 0.8rem 5rem 0.8rem !important;
+        max-width: 100% !important;
+    }
     h1 { font-size: 1.4rem !important; margin-bottom: 0.2rem !important; }
     h3 { font-size: 1.1rem !important; margin-top: 0.5rem !important; }
     .stChatMessage { padding: 0.4rem !important; }
-    section[data-testid="stSidebar"] { width: 280px !important; }
 
-    /* Tabs: compact on mobile */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 0px;
-        justify-content: center;
+    /* Hide sidebar completely — we use bottom nav */
+    section[data-testid="stSidebar"] { display: none !important; }
+    button[data-testid="stSidebarCollapsedControl"] { display: none !important; }
+
+    /* ── Fixed bottom navigation bar ── */
+    .bottom-nav {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: #0e1117;
+        border-top: 1px solid rgba(128,128,128,0.2);
+        display: flex;
+        justify-content: space-around;
+        align-items: center;
+        padding: 0.4rem 0 calc(0.4rem + env(safe-area-inset-bottom, 0px)) 0;
+        z-index: 999999;
     }
-    .stTabs [data-baseweb="tab"] {
-        padding: 8px 16px;
-        font-size: 0.9rem;
+    .nav-btn {
+        background: none;
+        border: none;
+        color: rgba(255,255,255,0.4);
+        font-size: 0.7rem;
+        text-align: center;
+        cursor: pointer;
+        padding: 0.3rem 1rem;
+        transition: color 0.15s;
+        text-decoration: none;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
     }
+    .nav-btn .nav-icon { font-size: 1.3rem; }
+    .nav-btn.active { color: #ff4b4b; }
+    .nav-btn:hover { color: rgba(255,255,255,0.8); }
 
     /* Status cards */
     .status-card {
@@ -141,17 +170,6 @@ MOBILE_CSS = """
     .status-card h4 { margin: 0 0 0.3rem 0; font-size: 0.85rem; opacity: 0.7; }
     .status-card .big { font-size: 1.8rem; font-weight: 700; margin: 0; }
     .status-card .sub { font-size: 0.8rem; opacity: 0.6; }
-
-    /* Weekly plan styling */
-    .plan-day {
-        padding: 0.5rem 0;
-        border-bottom: 1px solid rgba(128,128,128,0.15);
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
-    .plan-day-name { font-weight: 700; min-width: 2.5rem; font-size: 0.9rem; }
-    .plan-day-rest { opacity: 0.5; font-style: italic; }
 
     /* Tip box */
     .tip-box {
@@ -172,7 +190,7 @@ MOBILE_CSS = """
     footer {visibility: hidden;}
     header {visibility: hidden;}
 
-    /* Desktop: limit width for readability */
+    /* Desktop: limit width */
     @media (min-width: 769px) {
         .block-container { max-width: 700px !important; margin: auto; }
     }
@@ -476,26 +494,55 @@ def _extract_tip() -> str | None:
     return None
 
 
-# ── Header ────────────────────────────────────────────────────────────
+# ── Navigation state ──────────────────────────────────────────────────
+
+# Use query params for tab navigation (survives rerun)
+_nav_options = {"hem": 0, "chatt": 1, "profil": 2}
+_qp = st.query_params.get("tab", "hem")
+if _qp not in _nav_options:
+    _qp = "hem"
+active_tab = _qp
+
+# Render bottom navigation bar (fixed, always visible)
+def _nav_class(tab_name: str) -> str:
+    return "nav-btn active" if active_tab == tab_name else "nav-btn"
+
+st.markdown(f"""
+<div class="bottom-nav">
+    <a href="?tab=hem" class="{_nav_class('hem')}" target="_self">
+        <span class="nav-icon">&#127968;</span>
+        Hem
+    </a>
+    <a href="?tab=chatt" class="{_nav_class('chatt')}" target="_self">
+        <span class="nav-icon">&#128172;</span>
+        Chatt
+    </a>
+    <a href="?tab=profil" class="{_nav_class('profil')}" target="_self">
+        <span class="nav-icon">&#9881;</span>
+        Profil
+    </a>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ── Header (always visible) ───────────────────────────────────────────
 
 col_title, col_user = st.columns([3, 2])
 with col_title:
     st.markdown("# Trixa")
 with col_user:
     name_display = profile.name or user.email
-    st.markdown(f"<div style='text-align:right; padding-top:0.7rem; font-size:0.85rem; opacity:0.6'>{name_display}</div>", unsafe_allow_html=True)
-
-
-# ── Main tabs ─────────────────────────────────────────────────────────
-
-tab_home, tab_chat, tab_profile = st.tabs(["Hem", "Chatt", "Profil"])
+    st.markdown(
+        f"<div style='text-align:right; padding-top:0.7rem; font-size:0.85rem; opacity:0.6'>{name_display}</div>",
+        unsafe_allow_html=True,
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════
 # TAB: HEM
 # ══════════════════════════════════════════════════════════════════════
 
-with tab_home:
+if active_tab == "hem":
 
     # --- Status cards row ---
     if profile.next_race_name and weeks is not None:
@@ -595,7 +642,7 @@ with tab_home:
 # TAB: CHATT
 # ══════════════════════════════════════════════════════════════════════
 
-with tab_chat:
+if active_tab == "chatt":
 
     # File uploader (premium feature)
     uploaded_file = None
@@ -817,7 +864,7 @@ if prompt := st.chat_input("Skriv till Trixa..."):
 # TAB: PROFIL
 # ══════════════════════════════════════════════════════════════════════
 
-with tab_profile:
+if active_tab == "profil":
 
     # --- Race info ---
     if profile.next_race_name:
