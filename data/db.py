@@ -1,5 +1,5 @@
 """
-Supabase database operations for multi-user Nils Sjöberg.
+Supabase database operations for multi-user Trixa.
 Handles profiles and conversation history per user.
 """
 from __future__ import annotations

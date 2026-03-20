@@ -1,5 +1,5 @@
 -- ============================================================
--- Nils Sjöberg v2: Subscriptions + Daily Message Counts
+-- Trixa v2: Subscriptions + Daily Message Counts
 -- Kör i Supabase SQL Editor EFTER setup_db.sql
 -- ============================================================
 

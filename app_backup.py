@@ -1,8 +1,9 @@
 """
-Trixa – Streamlit Web App (Multi-user)
-Personlig AI-tranare driven av Claude.
+Nils Sjöberg – Streamlit Web App (Multi-user)
+Personlig AI-tränare driven av Claude.
+
+Kör med: streamlit run app.py
 """
-from __future__ import annotations
 
 import base64
 import json
@@ -16,16 +17,7 @@ import io
 
 import streamlit as st
 
-# ── Page config (MUST be first st call) ────────────────────────────
-st.set_page_config(
-    page_title="Trixa",
-    page_icon="🏊",
-    layout="centered",
-    initial_sidebar_state="auto",
-)
-
 # ── Debug mode: catch ALL import/startup errors ──────────────────
-_IMPORT_ERROR = None
 try:
     import anthropic
     import pandas as pd
@@ -55,15 +47,10 @@ try:
         get_user_tier, can_send_message, can_use_feature,
         messages_remaining, trial_days_remaining,
     )
+    _IMPORT_ERROR = None
 except Exception as e:
     _IMPORT_ERROR = traceback.format_exc()
     ROOT = Path(__file__).parent
-
-# Show import errors IMMEDIATELY
-if _IMPORT_ERROR:
-    st.error("App kunde inte starta. Feldetaljer:")
-    st.code(_IMPORT_ERROR)
-    st.stop()
 
 SYSTEM_PROMPT_FILE = ROOT / "prompts" / "system_prompt.md"
 MODEL = "claude-sonnet-4-5"
@@ -77,12 +64,7 @@ STRIPE_PORTAL_LINK = os.environ.get("STRIPE_PORTAL_LINK", "")
 
 WORKOUT_TOOL = {
     "name": "create_workout_file",
-    "description": (
-        "Skapa ett strukturerat traningspass som pushas till Intervals.icu och visas pa klockan. "
-        "VIKTIGT: For lopning, ange ALLTID hr_high (ovre pulsgrans) pa varje active-steg baserat pa atletens zoner. "
-        "For cykling, ange ALLTID power_high (ovre wattgrans). "
-        "Ange description pa varje steg - det visas pa klockan under passet."
-    ),
+    "description": "Skapa en nedladdningsbar träningspassfil (.tcx) som kan importeras i Garmin Connect eller TrainingPeaks. Använd detta när du föreslår ett strukturerat träningspass.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -94,15 +76,17 @@ WORKOUT_TOOL = {
                     "type": "object",
                     "properties": {
                         "type": {"type": "string", "enum": ["warmup", "active", "rest", "cooldown"]},
-                        "duration_seconds": {"type": "integer", "description": "Langd i sekunder"},
-                        "repeats": {"type": "integer", "description": "Antal repetitioner (bara for intervaller)"},
-                        "description": {"type": "string", "description": "Visas pa klockan, t.ex. 'Hog fart Z4' eller 'Latt jogg'"},
-                        "hr_high": {"type": "integer", "description": "Ovre pulsgrans i bpm. OBLIGATORISK for lopning."},
-                        "power_high": {"type": "integer", "description": "Ovre wattgrans. OBLIGATORISK for cykling."},
+                        "duration_seconds": {"type": "integer", "description": "Längd i sekunder"},
+                        "repeats": {"type": "integer", "description": "Antal repetitioner (bara för intervaller)"},
+                        "description": {"type": "string"},
+                        "hr_low": {"type": "integer", "description": "Pulsmål lågt (bpm)"},
+                        "hr_high": {"type": "integer", "description": "Pulsmål högt (bpm)"},
+                        "power_low": {"type": "integer", "description": "Effektmål lågt (watt)"},
+                        "power_high": {"type": "integer", "description": "Effektmål högt (watt)"},
                     },
-                    "required": ["type", "duration_seconds", "description"],
+                    "required": ["type", "duration_seconds"],
                 },
-                "description": "Steg i passet. Varje steg MASTE ha description och hr_high (lopning) eller power_high (cykling).",
+                "description": "Steg i passet",
             },
         },
         "required": ["name", "sport", "steps"],
@@ -242,6 +226,21 @@ def build_message_content(text: str, attachment=None):
     return blocks
 
 
+# ── Page config ──────────────────────────────────────────────────────
+
+st.set_page_config(
+    page_title="Nils Sjöberg",
+    page_icon="🏊",
+    layout="centered",
+    initial_sidebar_state="auto",
+)
+
+# Show import errors if any
+if _IMPORT_ERROR:
+    st.error("App kunde inte starta. Feldetaljer:")
+    st.code(_IMPORT_ERROR)
+    st.stop()
+
 st.markdown(MOBILE_CSS, unsafe_allow_html=True)
 
 
@@ -249,7 +248,7 @@ st.markdown(MOBILE_CSS, unsafe_allow_html=True)
 
 def show_auth_page():
     """Login/signup page."""
-    st.markdown("## Trixa")
+    st.markdown("## Nils Sjoberg")
     st.caption("Din personliga AI-tranare")
     st.markdown("---")
 
@@ -384,7 +383,7 @@ if "client" not in st.session_state:
 with st.sidebar:
     weeks = profile.weeks_to_race()
 
-    st.markdown("## Trixa")
+    st.markdown("## Nils Sjoberg")
     st.caption("Personlig Tranare")
     st.markdown(f"Inloggad som **{profile.name or user.email}**")
 
@@ -550,7 +549,7 @@ with st.sidebar:
                 codes = []
             if codes:
                 for c in codes:
-                    st.write(f"**{c['code']}** -- {c['discount_percent']}% | "
+                    st.write(f"**{c['code']}** — {c['discount_percent']}% | "
                              f"Anvant {c['times_used']}/{c['max_uses']} | "
                              f"{'Aktiv' if c.get('active') else 'Inaktiv'}")
             else:
@@ -569,36 +568,6 @@ with st.sidebar:
                         st.success(f"Skapade rabattkod: {dc_code.upper()}")
                         st.rerun()
 
-    # ── Intervals.icu Settings ─────────────────────────────────────
-    st.divider()
-    with st.expander("Intervals.icu"):
-        icu_settings = None
-        try:
-            icu_settings = db.get_intervals_settings(user.id, access_token)
-        except Exception:
-            pass
-        icu_key = st.text_input(
-            "API-nyckel",
-            value=icu_settings["api_key"] if icu_settings else "",
-            type="password",
-            key="icu_api_key",
-        )
-        icu_athlete = st.text_input(
-            "Athlete ID",
-            value=icu_settings["athlete_id"] if icu_settings else "",
-            key="icu_athlete_id",
-            help="Finns i URL:en pa intervals.icu (t.ex. i12345)",
-        )
-        if st.button("Spara Intervals.icu", use_container_width=True):
-            if icu_key and icu_athlete:
-                try:
-                    db.save_intervals_settings(user.id, access_token, icu_key, icu_athlete)
-                    st.success("Sparat!")
-                except Exception as e:
-                    st.error(f"Kunde inte spara: {e}")
-            else:
-                st.warning("Fyll i bade API-nyckel och Athlete ID.")
-
     st.divider()
 
     if st.button("Ny konversation", use_container_width=True):
@@ -616,7 +585,7 @@ with st.sidebar:
 
 # ── Main chat area ───────────────────────────────────────────────────
 
-st.title("Trixa")
+st.title("Nils Sjoberg")
 if profile.goal:
     st.caption(profile.goal)
 
@@ -646,48 +615,30 @@ for msg in history:
                     st.markdown(f"Bifogad: **{att['name']}**")
         st.markdown(msg["content"])
 
-        # Show workout export buttons
+        # Show download button for workout exports
         if msg.get("workout"):
+            from data.tcx_export import generate_tcx
             wo = msg["workout"]
-            col_dl, col_icu = st.columns(2)
-            with col_dl:
-                from data.tcx_export import generate_tcx
-                tcx_data = generate_tcx(wo)
-                st.download_button(
-                    label=f"Ladda ner .tcx",
-                    data=tcx_data,
-                    file_name=f"{wo['name'].replace(' ', '_')}.tcx",
-                    mime="application/vnd.garmin.tcx+xml",
-                    key=f"dl_{msg.get('_ts', '')}_{wo['name']}",
-                )
-            with col_icu:
-                icu_cfg = None
-                try:
-                    icu_cfg = db.get_intervals_settings(user.id, access_token)
-                except Exception:
-                    pass
-                if icu_cfg:
-                    if st.button("Pusha till Intervals.icu", key=f"icu_{msg.get('_ts', '')}_{wo['name']}"):
-                        from data.intervals_icu import push_workout
-                        result = push_workout(icu_cfg["api_key"], icu_cfg["athlete_id"], wo)
-                        if result.get("success"):
-                            st.success("Pushat till Intervals.icu!")
-                        else:
-                            st.error(f"Fel: {result.get('error', 'Okant fel')}")
-                else:
-                    st.caption("Koppla Intervals.icu i sidomenyn")
+            tcx_data = generate_tcx(wo)
+            st.download_button(
+                label=f"Ladda ner {wo['name']}.tcx",
+                data=tcx_data,
+                file_name=f"{wo['name'].replace(' ', '_')}.tcx",
+                mime="application/vnd.garmin.tcx+xml",
+                key=f"dl_{msg.get('_ts', '')}_{wo['name']}",
+            )
 
 # Auto-intro on first session
 if not history:
     with st.chat_message("assistant", avatar=None):
-        with st.spinner("Trixa tanker..."):
+        with st.spinner("Nils tanker..."):
             exp = getattr(profile, "experience_level", "unknown")
             if exp in ("beginner", "unknown"):
-                intro_msg = "Hej Trixa! Ny session. Presentera dig kort och fraga vad jag vill jobba med idag."
+                intro_msg = "Hej Nils! Ny session. Presentera dig kort och fraga vad jag vill jobba med idag."
             elif exp == "intermediate":
-                intro_msg = "Hej Trixa! Ny session. Ge mig en kort statusuppdatering och fraga vad jag vill fokusera pa."
+                intro_msg = "Hej Nils! Ny session. Ge mig en kort statusuppdatering och fraga vad jag vill fokusera pa."
             else:
-                intro_msg = "Hej Trixa! Ny session. Ge mig en kort statusuppdatering baserat pa min traningslogg och hur det ser ut infor nasta tavling."
+                intro_msg = "Hej Nils! Ny session. Ge mig en kort statusuppdatering baserat pa min traningslogg och hur det ser ut infor nasta tavling."
             history.append({"role": "user", "content": intro_msg, "_auto": True})
 
             with st.session_state.client.messages.stream(
@@ -704,7 +655,7 @@ if not history:
             )
 
 # Chat input
-if prompt := st.chat_input("Skriv till Trixa..."):
+if prompt := st.chat_input("Skriv till Nils..."):
     # Check message limit for free users
     try:
         daily_count = db.get_daily_message_count(user.id, access_token)
@@ -788,34 +739,16 @@ if prompt := st.chat_input("Skriv till Trixa..."):
             response = "\n".join(text_parts)
             st.markdown(response)
 
-            # Show workout export buttons
+            # Show download button if workout was generated
             if workout_data:
-                col_dl2, col_icu2 = st.columns(2)
-                with col_dl2:
-                    from data.tcx_export import generate_tcx
-                    tcx_data = generate_tcx(workout_data)
-                    st.download_button(
-                        label=f"Ladda ner .tcx",
-                        data=tcx_data,
-                        file_name=f"{workout_data['name'].replace(' ', '_')}.tcx",
-                        mime="application/vnd.garmin.tcx+xml",
-                    )
-                with col_icu2:
-                    icu_cfg = None
-                    try:
-                        icu_cfg = db.get_intervals_settings(user.id, access_token)
-                    except Exception:
-                        pass
-                    if icu_cfg:
-                        if st.button("Pusha till Intervals.icu", key="icu_new"):
-                            from data.intervals_icu import push_workout
-                            result = push_workout(icu_cfg["api_key"], icu_cfg["athlete_id"], workout_data)
-                            if result.get("success"):
-                                st.success("Pushat till Intervals.icu!")
-                            else:
-                                st.error(f"Fel: {result.get('error', 'Okant fel')}")
-                    else:
-                        st.caption("Koppla Intervals.icu i sidomenyn")
+                from data.tcx_export import generate_tcx
+                tcx_data = generate_tcx(workout_data)
+                st.download_button(
+                    label=f"Ladda ner {workout_data['name']}.tcx",
+                    data=tcx_data,
+                    file_name=f"{workout_data['name'].replace(' ', '_')}.tcx",
+                    mime="application/vnd.garmin.tcx+xml",
+                )
         else:
             with st.session_state.client.messages.stream(
                 model=MODEL,

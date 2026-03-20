@@ -132,7 +132,7 @@ class AthleteProfile:
     annars används Niklas hårdkodade defaults (för utveckling).
 
     experience_level: "beginner", "intermediate", "advanced"
-    Styr hur Nils kommunicerar (RPE vs zoner, enkel vs teknisk).
+    Styr hur Trixa kommunicerar (RPE vs zoner, enkel vs teknisk).
     """
 
     def __init__(self, profile_file: Path = PROFILE_FILE):

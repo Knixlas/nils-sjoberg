@@ -1,4 +1,4 @@
--- Nils Sjöberg – Supabase database schema
+-- Trixa – Supabase database schema
 -- Run this in Supabase SQL Editor (supabase.com → SQL Editor → New query)
 
 -- 1. Profiles table – per-user athlete data

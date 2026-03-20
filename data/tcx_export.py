@@ -1,5 +1,5 @@
 """
-TCX (Training Center XML) export for Nils Sjöberg.
+TCX (Training Center XML) export for Trixa.
 Generates .tcx workout files importable by Garmin Connect and TrainingPeaks.
 """
 

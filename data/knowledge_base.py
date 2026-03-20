@@ -1,6 +1,6 @@
 """
-Kunskapsbas – artiklar, principer och träningsteori som Nils
-använder i sin coachning. Lagras som .md-filer i knowledge/-mappen.
+Kunskapsbas – artiklar, principer och traningsteori som Trixa
+anvander i sin coachning. Lagras som .md-filer i knowledge/-mappen.
 """
 
 import re

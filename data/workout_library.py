@@ -1,5 +1,5 @@
 """
-Passbank – strukturerade träningspass som Nils kan välja från.
+Passbank – strukturerade traningspass som Trixa kan valja fran.
 Varje pass har sport, typ, zon, faser och en enjoyment-poäng
 som byggs upp baserat på atletens feedback.
 """

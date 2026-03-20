@@ -1,5 +1,5 @@
 """
-Membership tier logic for Nils Sjöberg.
+Membership tier logic for Trixa.
 Handles tier resolution, feature gating, and message limits.
 """
 from __future__ import annotations

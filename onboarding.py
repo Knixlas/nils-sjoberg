@@ -101,7 +101,7 @@ def separator(title: str):
 def run_onboarding() -> dict:
     print()
     print("+--------------------------------------------------+")
-    print("|  Hej! Jag ar Nils Sjoberg, din personliga tranare.|")
+    print("|  Hej! Jag ar Trixa, din personliga tranare.|")
     print("|  Beratta lite om dig sa hittar vi ratt start!     |")
     print("+--------------------------------------------------+")
     print()
@@ -228,7 +228,7 @@ def run_onboarding() -> dict:
         data["lt_hr"] = ask_int("Vilpuls (slag/min)")
     else:
         print()
-        print("  > Vi skippar testvarden for nu - Nils anvander upplevd anstrangning (RPE).")
+        print("  > Vi skippar testvarden for nu - Trixa anvander upplevd anstrangning (RPE).")
         print("  > Nar du vill kan du gora tester for att fa mer exakta zoner.")
 
     # 7. Halsa
@@ -251,7 +251,7 @@ def run_onboarding() -> dict:
 
     # 9. Preferenser
     separator("8. Preferenser")
-    data["preferences"] = ask("Nagot mer Nils bor veta? (tider, dagar, begransningar)", required=False)
+    data["preferences"] = ask("Nagot mer Trixa bor veta? (tider, dagar, begransningar)", required=False)
     data["ironman_finishes"] = 0
     if data["experience_level"] == "advanced" and "swim" in data["sports"]:
         data["ironman_finishes"] = ask_int("Antal Ironman/langdistans klara", default=0)
@@ -259,7 +259,7 @@ def run_onboarding() -> dict:
     # Garmin CSV
     separator("9. Traningshistorik (valfritt)")
     print("  Om du har exporterat aktiviteter fran Garmin Connect (CSV),")
-    print("  kan du importera dem for att Nils ska se din historik.")
+    print("  kan du importera dem for att Trixa ska se din historik.")
     csv_path = ask("Sokvag till Garmin CSV-fil", required=False)
     if csv_path and Path(csv_path).exists():
         input_dir = Path(__file__).parent / "input"
@@ -299,7 +299,7 @@ def run_onboarding() -> dict:
     if data.get("next_race_name"):
         print(f"  Tavling: {data['next_race_name']} ({data.get('next_race_date', '')})")
     print()
-    print("  Starta Nils:  streamlit run app.py")
+    print("  Starta Trixa:  streamlit run app.py")
     print()
 
     return data

@@ -1,5 +1,5 @@
 -- ============================================================
--- Nils Sjöberg v3: Subscriptions, Daily Counts, Discount Codes
+-- Trixa v3: Subscriptions, Daily Counts, Discount Codes
 -- Run in Supabase SQL Editor
 -- ============================================================
 
